@@ -41,6 +41,7 @@ export default function App(){
   const [query,setQuery]=useState('');
   const [composer,setComposer]=useState(false);
   const [mobileNav,setMobileNav]=useState(false);
+  const [detailOpen,setDetailOpen]=useState(false);
   const [toast,setToast]=useState('');
 
   useEffect(()=>localStorage.setItem(STORE,JSON.stringify(threads)),[threads]);
@@ -49,6 +50,12 @@ export default function App(){
     const t=setTimeout(()=>setToast(''),2200);
     return()=>clearTimeout(t);
   },[toast]);
+  useEffect(()=>{
+    if(!detailOpen)return;
+    const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')setDetailOpen(false)};
+    window.addEventListener('keydown',onKey);
+    return()=>window.removeEventListener('keydown',onKey);
+  },[detailOpen]);
 
   const visible=useMemo(()=>{
     const q=query.trim().toLowerCase();
@@ -75,12 +82,10 @@ export default function App(){
   const toggleSave=(id:string)=>setThreads(v=>v.map(t=>t.id===id?{...t,saved:!t.saved}:t));
   const like=(id:string)=>setThreads(v=>v.map(t=>t.id===id?{...t,likes:t.likes+1}:t));
   const reply=(id:string,body:string)=>setThreads(v=>v.map(t=>t.id===id?{...t,replies:[...t.replies,{id:crypto.randomUUID(),author:'Noah Ragan',initials:'NR',time:'now',body}]}:t));
+  const openThread=(id:string)=>{setSelected(id);setDetailOpen(true)};
 
   const chooseChannel=(next:string)=>{
-    setChannel(next);
-    setScope('channel');
-    setFeedMode('latest');
-    setMobileNav(false);
+    setChannel(next);setScope('channel');setFeedMode('latest');setMobileNav(false);setDetailOpen(false);
   };
 
   const signIn=async()=>{
@@ -99,12 +104,12 @@ export default function App(){
       </button>
       <nav>
         <button onClick={()=>setToast('Inbox is clear in this demo')}><Inbox/><span>Inbox</span><b>7</b></button>
-        <button onClick={()=>{setScope('saved');setFeedMode('latest');setMobileNav(false)}}><Bookmark/><span>Saved</span></button>
-        <button onClick={()=>{setScope('all');setFeedMode('latest');setMobileNav(false)}}><Compass/><span>Explore</span></button>
+        <button onClick={()=>{setScope('saved');setFeedMode('latest');setMobileNav(false);setDetailOpen(false)}}><Bookmark/><span>Saved</span></button>
+        <button onClick={()=>{setScope('all');setFeedMode('latest');setMobileNav(false);setDetailOpen(false)}}><Compass/><span>Explore</span></button>
       </nav>
       <div className="nav-head">Channels <Plus size={14}/></div>
       <div className="channels">
-        <button className={scope==='all'?'active':''} onClick={()=>{setScope('all');setFeedMode('latest');setMobileNav(false)}}><Hash/>all threads</button>
+        <button className={scope==='all'?'active':''} onClick={()=>{setScope('all');setFeedMode('latest');setMobileNav(false);setDetailOpen(false)}}><Hash/>all threads</button>
         {channels.map(([c,n])=><button className={scope==='channel'&&channel===c?'active':''} key={c} onClick={()=>chooseChannel(c)}><Hash/>{c}{n>0&&<b>{n}</b>}</button>)}
       </div>
       <div className="people">
@@ -139,8 +144,8 @@ export default function App(){
           className={active?.id===t.id?'thread selected':'thread'}
           role="button"
           tabIndex={0}
-          onClick={()=>setSelected(t.id)}
-          onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setSelected(t.id)}}}
+          onClick={()=>openThread(t.id)}
+          onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openThread(t.id)}}}
           aria-label={`Open thread: ${t.title}`}
         >
           <div className={`avatar big a${t.initials.charCodeAt(0)%4}`}>{t.initials}</div>
@@ -155,11 +160,12 @@ export default function App(){
       </div>
     </main>
 
-    <aside className="detail">
+    <aside className={detailOpen?'detail detail-open':'detail'} aria-label="Thread details">
+      <button className="detail-close" onClick={()=>setDetailOpen(false)} aria-label="Close thread details"><X/></button>
       {active?<ThreadDetail thread={active} onLike={()=>like(active.id)} onSave={()=>toggleSave(active.id)} onReply={b=>{reply(active.id,b);setToast('Reply posted')}} onToast={setToast}/>:<div className="empty">No thread selected.</div>}
     </aside>
 
-    {composer&&<Composer channel={scope==='channel'?channel:'engineering'} onClose={()=>setComposer(false)} onCreate={t=>{setThreads(v=>[t,...v]);setSelected(t.id);setChannel(t.channel);setScope('channel');setFeedMode('latest');setComposer(false);setToast('Thread published')}}/>}
+    {composer&&<Composer channel={scope==='channel'?channel:'engineering'} onClose={()=>setComposer(false)} onCreate={t=>{setThreads(v=>[t,...v]);setSelected(t.id);setChannel(t.channel);setScope('channel');setFeedMode('latest');setComposer(false);setDetailOpen(true);setToast('Thread published')}}/>}
     {toast&&<div className="toast"><CheckCircle2/>{toast}</div>}
   </div>
 }
