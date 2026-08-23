@@ -1,4 +1,4 @@
-import {useEffect,useMemo,useState} from 'react';
+import {useEffect,useMemo,useRef,useState} from 'react';
 import {
   Search,Plus,Hash,Inbox,Bookmark,Compass,Settings,Bell,ChevronDown,
   MessageSquare,CheckCircle2,ThumbsUp,Reply,MoreHorizontal,PanelLeft,
@@ -22,7 +22,7 @@ const seed:Thread[]=[
   {id:'5',channel:'research',title:'Customer interview notes: onboarding week 34',body:'Three recurring themes this week: people understand projects quickly, invite teammates later than expected, and want examples before creating their first workflow.',author:'Sam Kim',initials:'SK',time:'3h',tags:['research','onboarding'],likes:11,views:70,saved:false,replies:[]}
 ];
 
-const channels=[['engineering',12],['product',6],['design',4],['research',3],['random',0]] as const;
+const channels=['engineering','product','design','research','random'] as const;
 const STORE='threadline-v1';
 
 function readThreads():Thread[]{
@@ -43,33 +43,44 @@ export default function App(){
   const [mobileNav,setMobileNav]=useState(false);
   const [detailOpen,setDetailOpen]=useState(false);
   const [toast,setToast]=useState('');
+  const searchRef=useRef<HTMLInputElement>(null);
 
   useEffect(()=>localStorage.setItem(STORE,JSON.stringify(threads)),[threads]);
   useEffect(()=>{
     if(!toast)return;
-    const t=setTimeout(()=>setToast(''),2200);
-    return()=>clearTimeout(t);
+    const timer=setTimeout(()=>setToast(''),2200);
+    return()=>clearTimeout(timer);
   },[toast]);
   useEffect(()=>{
-    if(!detailOpen)return;
-    const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')setDetailOpen(false)};
+    const onKey=(event:KeyboardEvent)=>{
+      if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){
+        event.preventDefault();searchRef.current?.focus();
+      }
+      if(event.key==='Escape'&&detailOpen)closeDetail();
+    };
     window.addEventListener('keydown',onKey);
     return()=>window.removeEventListener('keydown',onKey);
   },[detailOpen]);
+  useEffect(()=>{
+    const id=window.location.hash.startsWith('#thread-')?window.location.hash.slice(8):'';
+    if(id&&threads.some(thread=>thread.id===id)){
+      setSelected(id);setScope('all');setDetailOpen(true);
+    }
+  },[]);
 
   const visible=useMemo(()=>{
     const q=query.trim().toLowerCase();
-    let next=threads.filter(t=>{
-      const inScope=scope==='saved'?t.saved:scope==='all'?true:t.channel===channel;
-      const matches=!q||`${t.title} ${t.body} ${t.tags.join(' ')} ${t.author}`.toLowerCase().includes(q);
-      const feedMatch=feedMode!=='unanswered'||t.replies.length===0;
+    let next=threads.filter(thread=>{
+      const inScope=scope==='saved'?thread.saved:scope==='all'?true:thread.channel===channel;
+      const matches=!q||`${thread.title} ${thread.body} ${thread.tags.join(' ')} ${thread.author}`.toLowerCase().includes(q);
+      const feedMatch=feedMode!=='unanswered'||thread.replies.length===0;
       return inScope&&matches&&feedMatch;
     });
     if(feedMode==='popular')next=[...next].sort((a,b)=>(b.likes+b.views)-(a.likes+a.views));
     return next;
   },[threads,scope,channel,query,feedMode]);
 
-  const active=visible.find(t=>t.id===selected)??visible[0];
+  const active=visible.find(thread=>thread.id===selected)??threads.find(thread=>thread.id===selected)??visible[0];
   const heading=scope==='saved'?'saved':scope==='all'?'all':channel;
   const description=scope==='saved'
     ?'The discussions and decisions you wanted to keep close.'
@@ -79,15 +90,23 @@ export default function App(){
         ?'Architecture, implementation, incidents, and useful technical context.'
         :'Shared context your team can find again later.';
 
-  const toggleSave=(id:string)=>setThreads(v=>v.map(t=>t.id===id?{...t,saved:!t.saved}:t));
-  const like=(id:string)=>setThreads(v=>v.map(t=>t.id===id?{...t,likes:t.likes+1}:t));
-  const reply=(id:string,body:string)=>setThreads(v=>v.map(t=>t.id===id?{...t,replies:[...t.replies,{id:crypto.randomUUID(),author:'Noah Ragan',initials:'NR',time:'now',body}]}:t));
-  const openThread=(id:string)=>{setSelected(id);setDetailOpen(true)};
-
-  const chooseChannel=(next:string)=>{
-    setChannel(next);setScope('channel');setFeedMode('latest');setMobileNav(false);setDetailOpen(false);
+  const toggleSave=(id:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,saved:!thread.saved}:thread));
+  const like=(id:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,likes:thread.likes+1}:thread));
+  const reply=(id:string,body:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,replies:[...thread.replies,{id:crypto.randomUUID(),author:'Noah Ragan',initials:'NR',time:'now',body}]}:thread));
+  const openThread=(id:string)=>{
+    setSelected(id);setDetailOpen(true);
+    window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}#thread-${id}`);
   };
-
+  const closeDetail=()=>{
+    setDetailOpen(false);
+    window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}`);
+  };
+  const chooseChannel=(next:string)=>{
+    setChannel(next);setScope('channel');setFeedMode('latest');setMobileNav(false);closeDetail();
+  };
+  const changeScope=(next:Scope)=>{
+    setScope(next);setFeedMode('latest');setMobileNav(false);closeDetail();
+  };
   const signIn=async()=>{
     if(!firebaseReady){setToast('Demo mode — add Firebase keys to enable Google sign-in');return}
     try{await signInGoogle();setToast('Signed in with Google')}
@@ -103,26 +122,29 @@ export default function App(){
         <ChevronDown size={15}/>
       </button>
       <nav>
-        <button onClick={()=>setToast('Inbox is clear in this demo')}><Inbox/><span>Inbox</span><b>7</b></button>
-        <button onClick={()=>{setScope('saved');setFeedMode('latest');setMobileNav(false);setDetailOpen(false)}}><Bookmark/><span>Saved</span></button>
-        <button onClick={()=>{setScope('all');setFeedMode('latest');setMobileNav(false);setDetailOpen(false)}}><Compass/><span>Explore</span></button>
+        <button onClick={()=>setToast('No inbox workflow is connected in demo mode')}><Inbox/><span>Inbox</span></button>
+        <button onClick={()=>changeScope('saved')}><Bookmark/><span>Saved</span></button>
+        <button onClick={()=>changeScope('all')}><Compass/><span>Explore</span></button>
       </nav>
       <div className="nav-head">Channels <Plus size={14}/></div>
       <div className="channels">
-        <button className={scope==='all'?'active':''} onClick={()=>{setScope('all');setFeedMode('latest');setMobileNav(false);setDetailOpen(false)}}><Hash/>all threads</button>
-        {channels.map(([c,n])=><button className={scope==='channel'&&channel===c?'active':''} key={c} onClick={()=>chooseChannel(c)}><Hash/>{c}{n>0&&<b>{n}</b>}</button>)}
+        <button className={scope==='all'?'active':''} onClick={()=>changeScope('all')}><Hash/>all threads<b>{threads.length}</b></button>
+        {channels.map(item=>{
+          const count=threads.filter(thread=>thread.channel===item).length;
+          return <button className={scope==='channel'&&channel===item?'active':''} key={item} onClick={()=>chooseChannel(item)}><Hash/>{item}{count>0&&<b>{count}</b>}</button>;
+        })}
       </div>
       <div className="people">
         <div className="nav-head">Online now <span>4</span></div>
-        {[['MC','Maya'],['AM','Avery'],['JL','Jamie']].map(([a,n])=><div key={a}><span className="avatar">{a}<i/></span>{n}</div>)}
+        {[['MC','Maya'],['AM','Avery'],['JL','Jamie']].map(([initials,name])=><div key={initials}><span className="avatar">{initials}<i/></span>{name}</div>)}
       </div>
       <button className="settings" onClick={()=>setToast('Workspace settings are available after backend setup')}><Settings/>Workspace settings</button>
     </aside>
 
     <main className="feed">
       <header>
-        <button className="mobile" onClick={()=>setMobileNav(v=>!v)} aria-label="Toggle workspace navigation"><PanelLeft/></button>
-        <div className="search"><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search conversations, decisions, people…" aria-label="Search threads"/><kbd>⌘ K</kbd></div>
+        <button className="mobile" onClick={()=>setMobileNav(value=>!value)} aria-label="Toggle workspace navigation"><PanelLeft/></button>
+        <div className="search"><Search/><input ref={searchRef} value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search conversations, decisions, people…" aria-label="Search threads"/><kbd>⌘ K</kbd></div>
         <button className="bell" onClick={()=>setToast('No new notifications')} aria-label="Notifications"><Bell/><i/></button>
         <button className="new" onClick={()=>setComposer(true)}><PenLine/>New thread</button>
       </header>
@@ -139,41 +161,34 @@ export default function App(){
 
       <div className="thread-list">
         {visible.length===0&&<div className="empty">No threads match this view.</div>}
-        {visible.map(t=><article
-          key={t.id}
-          className={active?.id===t.id?'thread selected':'thread'}
-          role="button"
-          tabIndex={0}
-          onClick={()=>openThread(t.id)}
-          onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openThread(t.id)}}}
-          aria-label={`Open thread: ${t.title}`}
-        >
-          <div className={`avatar big a${t.initials.charCodeAt(0)%4}`}>{t.initials}</div>
+        {visible.map(thread=><article key={thread.id} className={active?.id===thread.id?'thread selected':'thread'}>
+          <button className="thread-open-overlay" onClick={()=>openThread(thread.id)} aria-label={`Open thread: ${thread.title}`}/>
+          <div className={`avatar big a${thread.initials.charCodeAt(0)%4}`}>{thread.initials}</div>
           <div>
-            <div className="thread-meta"><b>{t.author}</b><span>{t.time} ago · #{t.channel}</span>{t.solved&&<em><CheckCircle2/>Resolved</em>}</div>
-            <h2>{t.title}</h2><p>{t.body}</p>
-            <div className="tags">{t.tags.map(x=><span key={x}>{x}</span>)}</div>
-            <div className="stats"><span><ThumbsUp/>{t.likes}</span><span><MessageSquare/>{t.replies.length}</span><span><Clock3/>{t.views} views</span></div>
+            <div className="thread-meta"><b>{thread.author}</b><span>{thread.time} ago · #{thread.channel}</span>{thread.solved&&<em><CheckCircle2/>Resolved</em>}</div>
+            <h2>{thread.title}</h2><p>{thread.body}</p>
+            <div className="tags">{thread.tags.map(tag=><span key={tag}>{tag}</span>)}</div>
+            <div className="stats"><span><ThumbsUp/>{thread.likes}</span><span><MessageSquare/>{thread.replies.length}</span><span><Clock3/>{thread.views} views</span></div>
           </div>
-          <button className={t.saved?'save saved':'save'} aria-label={t.saved?'Remove from saved':'Save thread'} onClick={e=>{e.stopPropagation();toggleSave(t.id)}}><Bookmark/></button>
+          <button className={thread.saved?'save saved':'save'} aria-label={thread.saved?'Remove from saved':'Save thread'} onClick={()=>toggleSave(thread.id)}><Bookmark/></button>
         </article>)}
       </div>
     </main>
 
     <aside className={detailOpen?'detail detail-open':'detail'} aria-label="Thread details">
-      <button className="detail-close" onClick={()=>setDetailOpen(false)} aria-label="Close thread details"><X/></button>
-      {active?<ThreadDetail thread={active} onLike={()=>like(active.id)} onSave={()=>toggleSave(active.id)} onReply={b=>{reply(active.id,b);setToast('Reply posted')}} onToast={setToast}/>:<div className="empty">No thread selected.</div>}
+      <button className="detail-close" onClick={closeDetail} aria-label="Close thread details"><X/></button>
+      {active?<ThreadDetail thread={active} onLike={()=>like(active.id)} onSave={()=>toggleSave(active.id)} onReply={body=>{reply(active.id,body);setToast('Reply posted')}} onToast={setToast}/>:<div className="empty">No thread selected.</div>}
     </aside>
 
-    {composer&&<Composer channel={scope==='channel'?channel:'engineering'} onClose={()=>setComposer(false)} onCreate={t=>{setThreads(v=>[t,...v]);setSelected(t.id);setChannel(t.channel);setScope('channel');setFeedMode('latest');setComposer(false);setDetailOpen(true);setToast('Thread published')}}/>}
+    {composer&&<Composer channel={scope==='channel'?channel:'engineering'} onClose={()=>setComposer(false)} onCreate={thread=>{setThreads(current=>[thread,...current]);setSelected(thread.id);setChannel(thread.channel);setScope('channel');setFeedMode('latest');setComposer(false);setDetailOpen(true);window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}#thread-${thread.id}`);setToast('Thread published')}}/>}
     {toast&&<div className="toast"><CheckCircle2/>{toast}</div>}
   </div>
 }
 
-function ThreadDetail({thread,onLike,onSave,onReply,onToast}:{thread:Thread;onLike:()=>void;onSave:()=>void;onReply:(b:string)=>void;onToast:(m:string)=>void}){
+function ThreadDetail({thread,onLike,onSave,onReply,onToast}:{thread:Thread;onLike:()=>void;onSave:()=>void;onReply:(body:string)=>void;onToast:(message:string)=>void}){
   const [body,setBody]=useState('');
   const copyLink=async()=>{
-    const url=`${window.location.origin}${window.location.pathname}#thread-${thread.id}`;
+    const url=`${window.location.origin}${window.location.pathname}${window.location.search}#thread-${thread.id}`;
     try{await navigator.clipboard.writeText(url);onToast('Thread link copied')}
     catch{onToast('Copy failed — your browser blocked clipboard access')}
   };
@@ -184,26 +199,26 @@ function ThreadDetail({thread,onLike,onSave,onReply,onToast}:{thread:Thread;onLi
     <div className="detail-actions"><button onClick={onLike}><ThumbsUp/>{thread.likes}</button><button onClick={()=>onToast('Reply box is ready below')}><Reply/>Reply</button><button onClick={copyLink}><Link2/>Copy link</button></div>
     {thread.solved&&<div className="resolved"><CheckCircle2/><div><b>Marked as resolved</b><span>This thread contains a confirmed answer or decision.</span></div></div>}
     <div className="reply-head"><b>{thread.replies.length} {thread.replies.length===1?'reply':'replies'}</b><span>Newest first</span></div>
-    <div className="replies">{thread.replies.slice().reverse().map(r=><article key={r.id}><span className="avatar">{r.initials}</span><div><b>{r.author}<small>{r.time} ago</small></b><p>{r.body}</p><button type="button"><ThumbsUp/>Helpful</button></div></article>)}</div>
-    <form className="reply-box" onSubmit={e=>{e.preventDefault();if(body.trim()){onReply(body.trim());setBody('')}}}>
-      <span className="avatar nr">NR</span><div><textarea value={body} onChange={e=>setBody(e.target.value)} placeholder="Add useful context…" aria-label="Reply text"/><div><span>Markdown supported</span><button><Send/>Reply</button></div></div>
+    <div className="replies">{thread.replies.slice().reverse().map(item=><article key={item.id}><span className="avatar">{item.initials}</span><div><b>{item.author}<small>{item.time} ago</small></b><p>{item.body}</p><button type="button"><ThumbsUp/>Helpful</button></div></article>)}</div>
+    <form className="reply-box" onSubmit={event=>{event.preventDefault();if(body.trim()){onReply(body.trim());setBody('')}}}>
+      <span className="avatar nr">NR</span><div><textarea value={body} onChange={event=>setBody(event.target.value)} placeholder="Add useful context…" aria-label="Reply text"/><div><span>Markdown supported</span><button><Send/>Reply</button></div></div>
     </form>
   </div>
 }
 
-function Composer({channel,onClose,onCreate}:{channel:string;onClose:()=>void;onCreate:(t:Thread)=>void}){
+function Composer({channel,onClose,onCreate}:{channel:string;onClose:()=>void;onCreate:(thread:Thread)=>void}){
   const [title,setTitle]=useState('');
   const [body,setBody]=useState('');
-  const [ch,setCh]=useState(channel);
+  const [selectedChannel,setSelectedChannel]=useState(channel);
   const [tags,setTags]=useState('');
   return <div className="overlay" onMouseDown={onClose}>
-    <form className="composer" onMouseDown={e=>e.stopPropagation()} onSubmit={e=>{e.preventDefault();if(title.trim()&&body.trim())onCreate({id:crypto.randomUUID(),channel:ch,title:title.trim(),body:body.trim(),author:'Noah Ragan',initials:'NR',time:'now',tags:tags.split(',').map(x=>x.trim()).filter(Boolean),likes:0,views:1,saved:false,replies:[]})}}>
+    <form className="composer" onMouseDown={event=>event.stopPropagation()} onSubmit={event=>{event.preventDefault();if(title.trim()&&body.trim())onCreate({id:crypto.randomUUID(),channel:selectedChannel,title:title.trim(),body:body.trim(),author:'Noah Ragan',initials:'NR',time:'now',tags:tags.split(',').map(tag=>tag.trim()).filter(Boolean),likes:0,views:1,saved:false,replies:[]})}}>
       <button type="button" className="close" onClick={onClose} aria-label="Close composer"><X/></button>
       <span className="compose-icon"><Sparkles/></span><h2>Start a useful thread</h2><p>Ask a question, document a decision, or leave context future-you will be glad to find.</p>
-      <label>Title<input autoFocus required value={title} onChange={e=>setTitle(e.target.value)} placeholder="What should people know?"/></label>
-      <label>Channel<select value={ch} onChange={e=>setCh(e.target.value)}>{channels.map(([c])=><option key={c}>{c}</option>)}</select></label>
-      <label>Details<textarea required value={body} onChange={e=>setBody(e.target.value)} placeholder="Add enough context for someone who wasn't in the room…"/></label>
-      <label>Tags<input value={tags} onChange={e=>setTags(e.target.value)} placeholder="api, reliability, decision"/></label>
+      <label>Title<input autoFocus required value={title} onChange={event=>setTitle(event.target.value)} placeholder="What should people know?"/></label>
+      <label>Channel<select value={selectedChannel} onChange={event=>setSelectedChannel(event.target.value)}>{channels.map(item=><option key={item}>{item}</option>)}</select></label>
+      <label>Details<textarea required value={body} onChange={event=>setBody(event.target.value)} placeholder="Add enough context for someone who wasn't in the room…"/></label>
+      <label>Tags<input value={tags} onChange={event=>setTags(event.target.value)} placeholder="api, reliability, decision"/></label>
       <button className="publish"><Send/>Publish thread</button>
     </form>
   </div>
