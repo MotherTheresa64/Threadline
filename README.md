@@ -8,13 +8,19 @@
 - Functional **Saved** and **Explore** scopes
 - Latest, Popular, and Unanswered feed filtering
 - Search across thread titles, bodies, authors, and tags
-- Thread detail experience with replies, reactions, saved state, resolved decisions, and copyable links
+- `Ctrl/Cmd + K` keyboard search focus
+- Thread detail experience with replies, reactions, saved state, resolved decisions, and copyable deep links
+- Deep-linked thread URLs reopen the correct discussion
 - New-thread composer with channel assignment and tag metadata
-- Keyboard-accessible thread selection and accessible icon actions
+- Keyboard-accessible thread selection and icon actions
+- Responsive mobile/tablet detail drawer with Escape/close behavior
 - Browser persistence so created threads, replies, likes, and saved state survive refreshes
+- Branded runtime error recovery instead of blank-screen failure
 - Google sign-in hook when Firebase configuration is present
 - Credential-free demo mode when Firebase is absent
-- Express production host, health endpoint, Render Blueprint, and CI build/typecheck validation
+- Installable web-app metadata and reduced-motion/focus accessibility safeguards
+- Express production host with health endpoint, security headers, caching policy, and graceful shutdown
+- Render Blueprint and GitHub Actions gated on the same full verification command
 
 ## Stack
 
@@ -34,13 +40,13 @@ npm run dev
 
 The product works immediately without credentials. Demo state is persisted in `localStorage`.
 
-Useful checks:
+Full preflight:
 
 ```bash
-npm run typecheck
-npm run build
-npm start
+npm run check
 ```
+
+That command typechecks both targets, builds client/server, and verifies the required production artifacts. Run `npm start` afterward to test the compiled Express-hosted build.
 
 ## Firebase authentication
 
@@ -54,11 +60,21 @@ Thread content currently uses local-first persistence so a recruiter or reviewer
 
 `GET /api/health` reports service readiness without exposing secrets.
 
+## Engineering docs
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — interaction model, responsive architecture, persistence, deep links, auth, and hosted-data evolution
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — local/Render/Firebase deployment runbook and hosted-persistence phase
+- [`docs/QA.md`](docs/QA.md) — feed, thread, deep-link, mobile drawer, auth, API, and accessibility acceptance checklist
+
 ## Deployment
 
-The included `render.yaml` installs the build toolchain explicitly, pins the Node runtime, exposes Firebase environment placeholders, starts the compiled Express server, and uses `/api/health` for service checks.
+The included `render.yaml` pins the Node runtime, installs the build toolchain, exposes Firebase environment placeholders, starts the compiled Express server, and uses `/api/health` for service checks.
 
-GitHub Actions independently runs TypeScript checks, builds both client and server, and verifies the expected production artifacts exist.
+```text
+GitHub repo → npm install → npm run check → Express host → health check
+```
+
+CI uses the same `npm run check` contract, keeping local, CI, and Render verification aligned.
 
 ## Why this project matters
 
