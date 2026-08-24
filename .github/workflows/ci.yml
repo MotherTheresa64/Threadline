@@ -22,7 +22,4 @@ jobs:
         with:
           node-version: 22.16.0
       - run: npm install --include=dev --no-audit --no-fund
-      - run: npm run typecheck
-      - run: npm run build
-      - name: Verify production artifacts
-        run: test -f dist/index.html && test -f dist-server/index.js
+      - run: npm run check
