@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"tsx watch server/index.ts\"",
     "build": "vite build && tsc -p tsconfig.server.json",
+    "verify:build": "node scripts/verify-build.mjs",
+    "check": "npm run typecheck && npm run build && npm run verify:build",
     "start": "node dist-server/index.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
