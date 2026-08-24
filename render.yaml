@@ -3,7 +3,7 @@ services:
     name: threadline
     runtime: node
     plan: free
-    buildCommand: npm install --include=dev --no-audit --no-fund && npm run build
+    buildCommand: npm install --include=dev --no-audit --no-fund && npm run check
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
