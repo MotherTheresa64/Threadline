@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AtSign, Bell, Bookmark, BookOpen, Check, CheckCircle2, ChevronDown, Clock3, FileClock, FileText, Hash, Home, Inbox, Kanban, Link2, LogIn, LogOut, MessageSquare, MoreHorizontal, PanelLeft, PenLine, Plus, RotateCcw, Search, Send, Settings, ShieldCheck, Sparkles, ThumbsUp, Timeline, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { AtSign, Bell, Bookmark, BookOpen, Check, CheckCircle2, ChevronDown, Clock3, FileClock, FileText, Hash, Home, Inbox, Kanban, Link2, LogIn, LogOut, MessageSquare, MoreHorizontal, PanelLeft, PenLine, Plus, RotateCcw, Search, Send, Settings, ShieldCheck, Sparkles, ThumbsUp, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { createWorkspace as createRemoteWorkspace, firebaseReady, saveWorkspace as saveRemoteWorkspace, signInGoogle, signOutUser, watchAuth, watchWorkspaces } from './firebase';
 import { createDemoWorkspace } from './seed';
 import type { Activity, BoardStatus, CurrentUser, Discussion, KnowledgeDocument, Member, Notification, Role, View, Workspace } from './types';
@@ -215,7 +215,7 @@ export default function App() {
         <NavButton active={view === 'saved'} icon={<Bookmark />} label="Saved" count={workspace.threads.filter(thread => thread.savedBy.includes(normalizeEmail(currentUser.email))).length} onClick={() => chooseView('saved')}/>
         <NavButton active={view === 'documents'} icon={<BookOpen />} label="Knowledge" count={workspace.documents.length} onClick={() => chooseView('documents')}/>
         <NavButton active={view === 'board'} icon={<Kanban />} label="Board" onClick={() => chooseView('board')}/>
-        <NavButton active={view === 'timeline'} icon={<Timeline />} label="Timeline" onClick={() => chooseView('timeline')}/>
+        <NavButton active={view === 'timeline'} icon={<Clock3 />} label="Timeline" onClick={() => chooseView('timeline')}/>
       </nav>
       <div className="nav-head">Channels {canManage && <button className="tiny-icon" onClick={() => setSettingsOpen(true)} aria-label="Manage channels"><Plus size={13}/></button>}</div>
       <div className="channels">
