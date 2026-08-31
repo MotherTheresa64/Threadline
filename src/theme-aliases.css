@@ -1,0 +1,1 @@
+html[data-theme]{--ink:var(--theme-text);--muted:var(--theme-muted);--line:var(--theme-line);--green:var(--theme-accent);--cream:var(--theme-bg);--paper:var(--theme-surface)}
