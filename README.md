@@ -1,42 +1,64 @@
 # Threadline
 
-**Conversations that become knowledge.** Threadline is a collaborative discussion workspace for turning team questions, decisions, and implementation context into durable knowledge instead of letting useful information disappear in chat.
+**Where ideas connect and teams create together.** Threadline is a collaborative team knowledge and communication workspace built to keep discussions, decisions, documents, and ongoing work connected instead of scattering useful context across chat and disconnected tools.
 
 **Live demo:** https://threadline-ga8w.onrender.com
 
+## Product model
+
+Threadline is organized around a durable path:
+
+**Workspace → Channel → Discussion → Replies → Resolution → Knowledge**
+
+A discussion is intentionally titled and searchable. When the team reaches an outcome, the thread can be resolved with a concise decision instead of forcing a future reader to reconstruct the answer from dozens of replies. Durable material can then be moved into a versioned knowledge document that links back to its source discussion.
+
 ## What works today
 
-- Four complete user-selectable reading themes — **Paper, Moss, Lavender, and Night** — with device-local persistence and matching browser theme color
-- Theme-aware workspace rail, feed, thread detail, composer, settings, filters, reply surfaces, mobile drawer, focus states, and feedback—not accent-only recoloring
-- Channel-based workspace with Engineering, Product, Design, Research, Random, and cross-workspace views
-- Functional **Inbox** for unresolved work, **Saved** for bookmarks, and **Explore** for the complete knowledge base
-- Latest, Popular, and Unanswered feed filtering
-- Search across thread titles, bodies, authors, tags, and channels
-- `Ctrl/Cmd + K` keyboard search focus
-- Thread detail experience with replies, likes, bookmarks, resolved state, and copyable deep links
-- Deep-linked thread URLs reopen the correct discussion
-- Thread view counts increment when discussions are opened
-- Threads can be resolved, reopened, or deleted
-- Replies support persistent Helpful reactions
-- New-thread composer with channel assignment and tag metadata
-- Real workspace settings panel with auth/persistence status and sample-workspace reset
-- Keyboard-accessible interaction model with Escape handling for navigation, detail, composer, settings, and appearance layers
-- Responsive mobile/tablet detail drawer with full-width phone treatment and mobile navigation backdrop
-- Defensive browser persistence so created threads, replies, reactions, views, saved state, resolution state, and theme preference survive refreshes
-- Corrupted or unavailable local storage falls back safely instead of crashing the workspace
-- Branded runtime error recovery instead of blank-screen failure
-- Google sign-in hook when Firebase configuration is present
-- Credential-free local-first mode when Firebase is absent
-- Installable web-app metadata, canonical production metadata, reduced-motion support, visible keyboard focus, refined scroll behavior, and non-overlapping toast/theme feedback
+- Multiple isolated workspaces with switching and workspace creation
+- Workspace member roles: **Owner, Admin, Member, Guest/viewer**
+- Admin member invitations by email and member removal
+- Admin channel creation and channel-scoped discussions
+- Public workspace channels plus a data model for private-channel membership
+- Titled discussions with authorship, tags, threaded replies, reactions, bookmarks, view counts, and deep links
+- Discussion states for open/in-discussion/resolved/archived workflows
+- Explicit resolution/decision summaries with resolver and timestamp
+- Key/accepted replies for important answers
+- Member mentions in replies that create relevant inbox notifications
+- Global **Search anything** across discussions, decisions, tags, authors, channels, and documents
+- Persistent knowledge documents with tags, channel relationships, source discussions, editor metadata, and version history
+- Restoreable prior document versions
+- Connected discussion → decision → documentation relationships
+- Saved/bookmarked discussions
+- Inbox with read/unread notification state
+- Workspace activity timeline for meaningful changes
+- Lightweight board view with Backlog, Planned, Active, Review, and Complete states
+- Home overview with open discussions, recorded decisions, documents, members, recent discussions, and recently updated knowledge
+- Stable deep links for discussions and documents
+- Responsive desktop/tablet/mobile workspace navigation and detail drawers
+- Keyboard shortcut: `Ctrl/Cmd + K` focuses global search; `Escape` closes overlays/detail/navigation
+- Four existing appearance themes: **Paper, Moss, Lavender, and Night**
+- Fictional demo organization and fictional sample people/content only
 - Express production host with health endpoint, security headers, caching policy, API 404 handling, and graceful shutdown
-- Render auto-deploy from `main` with `/api/health` health checks
-- GitHub Actions and Render builds gated on the same full verification command
+- Render deployment and GitHub Actions verification
+
+## Real-time multi-user mode
+
+Threadline keeps a no-credential demo mode so the portfolio build always opens, but Firebase configuration now enables a genuine shared workspace mode:
+
+- Firebase Authentication supplies persistent user identity.
+- Firestore stores shared workspace data.
+- Firestore `onSnapshot` listeners update a signed-in member's workspace list in real time.
+- Workspace membership is keyed to verified authentication email.
+- Firestore security rules isolate workspaces and enforce owner/admin management versus member collaboration versus guest read-only access.
+
+The current Firestore document model stores each workspace as one collaboration snapshot. That is intentionally simple for this portfolio-scale implementation. A high-volume production evolution would split discussions, replies, documents, notifications, and activity into subcollections to reduce write contention and enable more granular per-record rules.
 
 ## Stack
 
 **Frontend:** React 19, TypeScript, Vite, Lucide, custom responsive/themed CSS  
-**Auth:** Firebase Authentication (optional final integration)  
-**Persistence:** local-first discussion workspace + persisted appearance preference  
+**Auth:** Firebase Authentication / Google provider  
+**Shared data:** Cloud Firestore when configured  
+**Demo persistence:** localStorage fallback  
 **Hosting:** Express 5 + Render  
 **Quality:** strict TypeScript, GitHub Actions, pinned dependency versions
 
@@ -49,7 +71,7 @@ npm install
 npm run dev
 ```
 
-The product works immediately without credentials. Workspace state and appearance preference are persisted in `localStorage`.
+Without Firebase credentials, Threadline starts in a fully interactive browser-local demo workspace.
 
 Full preflight:
 
@@ -60,26 +82,57 @@ npm run smoke:server
 
 `npm run check` typechecks both targets, builds client/server, and verifies the required production artifacts. `npm run smoke:server` boots the compiled Express app and verifies its health/API behavior.
 
-## Firebase authentication
+## Firebase setup
 
-Copy `.env.example` to `.env` and provide the four `VITE_FIREBASE_*` values from a Firebase web app. Enable Google as an Authentication provider.
+1. Create a Firebase project and web app.
+2. Enable **Google** in Firebase Authentication.
+3. Create a **Cloud Firestore** database.
+4. Copy `.env.example` to `.env` and fill in:
 
-When credentials are unavailable, Threadline remains fully reviewable in local-first mode instead of blocking the interface behind a login screen.
+```text
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_APP_ID=
+```
 
-## Persistence boundary
+5. Deploy the included Firestore rules:
 
-Thread content currently uses local-first persistence so a reviewer can immediately create, resolve, reply to, save, and revisit discussions without external setup. Firebase is isolated behind `src/firebase.ts`, appearance is isolated in `src/theme.ts`, and the Node host is isolated in `server/index.ts`, leaving clean boundaries for hosted persistence and future account-level preferences.
+```bash
+npx firebase-tools deploy --only firestore:rules --project YOUR_FIREBASE_PROJECT_ID
+```
 
-For real multi-user workspaces and cross-device data, the remaining production integration is Firebase Authentication plus a hosted datastore such as Firestore, with workspace membership and document access keyed to authenticated users. The current live demo intentionally keeps data browser-local.
+The included `firestore.rules` enforce:
 
-`GET /api/health` reports service readiness without exposing secrets.
+- verified authenticated email for shared workspaces,
+- workspace reads only for listed members,
+- owner/admin control over membership, channels, and workspace settings,
+- member writes only to collaborative content fields,
+- guest/viewer read-only access,
+- owner-only workspace deletion.
+
+### Invitations
+
+An admin invites a teammate by email from Workspace Settings. That email is added to the workspace membership list with the selected role. When the teammate signs in with that same Google account, Firestore membership rules allow the workspace to appear automatically.
+
+## Demo mode
+
+When Firebase is not configured—or when a visitor has not signed in—the application uses a fictional Northstar Labs workspace in browser storage. Demo content never uses real friends, relatives, private email addresses, or private conversations.
+
+This keeps the public portfolio reviewable without credentials while preserving a real shared-data path for authenticated users.
+
+## Persistence and authorization boundary
+
+`src/firebase.ts` owns authentication, Firestore subscriptions, and shared saves. `firestore.rules` owns the server-side workspace membership/role boundary. `src/seed.ts` owns fictional demo data. `src/types.ts` defines the collaboration domain model. `src/App.tsx` owns product interaction and derives board, search, inbox, timeline, resolution, and knowledge workflows from that model.
+
+Because regular member updates are currently stored inside a workspace snapshot document, rules can prevent members from changing workspace identity, membership, roles, and channels, but they cannot perfectly distinguish one member's nested thread/reply mutation from another member's nested thread/reply mutation. The production-scale evolution is to move those records to subcollections with author-specific rules.
 
 ## Engineering docs
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — interaction model, responsive architecture, persistence, deep links, auth, and hosted-data evolution
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — local/Render/Firebase deployment runbook and hosted-persistence phase
-- [`docs/QA.md`](docs/QA.md) — feed, thread, deep-link, mobile drawer, auth, API, and accessibility acceptance checklist
-- [`docs/PROJECT_MAP.md`](docs/PROJECT_MAP.md) — quick map of the files that own workspace UI, persistence, auth, server, and deployment
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — interaction model and system architecture
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — local/Render/Firebase deployment runbook
+- [`docs/QA.md`](docs/QA.md) — release acceptance checklist
+- [`docs/PROJECT_MAP.md`](docs/PROJECT_MAP.md) — file ownership map
 
 ## Deployment
 
@@ -89,8 +142,8 @@ The production Render service tracks `main` with Auto-Deploy enabled. Each commi
 GitHub main → npm install → npm run check → Express host → /api/health → live
 ```
 
-CI uses the same `npm run check` contract, keeping local, CI, and Render verification aligned.
+Render serves the React application and Express health/API surface. Firebase Authentication and Firestore remain managed Firebase services and use the browser's public web-app configuration; no Firebase secret is embedded in the repository.
 
 ## Why this project matters
 
-Threadline is intentionally not a generic social feed. It models a real collaboration problem: preserving decisions, technical context, questions, and expertise with enough structure to remain searchable later while retaining the speed of conversational software. The project demonstrates interaction design, derived filtering, persistent state, deep linking, resolution workflows, personalized appearance, accessibility, auth boundaries, responsive application architecture, and deployable full-stack structure.
+Threadline is not a Slack clone, Discord clone, personal to-do app, or full project planner. Its defining purpose is to preserve the relationship between communication and institutional knowledge. The project demonstrates multi-workspace collaboration, role-aware authorization, real-time hosted data, discussion and resolution workflows, searchable knowledge, document history, deep linking, responsive application architecture, theme systems, accessibility, and deployable full-stack structure.

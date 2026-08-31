@@ -1,278 +1,307 @@
-import {useEffect,useMemo,useRef,useState} from 'react';
-import {
-  Search,Plus,Hash,Inbox,Bookmark,Compass,Settings,Bell,ChevronDown,
-  MessageSquare,CheckCircle2,ThumbsUp,Reply,PanelLeft,
-  PenLine,Clock3,Sparkles,X,Send,Link2,Trash2,RotateCcw,ShieldCheck
-} from 'lucide-react';
-import {firebaseReady,signInGoogle} from './firebase';
-
-type ReplyT={id:string;author:string;initials:string;time:string;body:string;helpful?:number};
-type Thread={
-  id:string;channel:string;title:string;body:string;author:string;initials:string;
-  time:string;tags:string[];replies:ReplyT[];likes:number;views:number;saved:boolean;solved?:boolean
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AtSign, Bell, Bookmark, BookOpen, Check, CheckCircle2, ChevronDown, Clock3, FileClock, FileText, Hash, Home, Inbox, Kanban, Link2, LogIn, LogOut, MessageSquare, MoreHorizontal, PanelLeft, PenLine, Plus, RotateCcw, Search, Send, Settings, ShieldCheck, Sparkles, ThumbsUp, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { createWorkspace as createRemoteWorkspace, firebaseReady, saveWorkspace as saveRemoteWorkspace, signInGoogle, signOutUser, watchAuth, watchWorkspaces } from './firebase';
+import { createDemoWorkspace } from './seed';
+import type { Activity, BoardStatus, CurrentUser, Discussion, KnowledgeDocument, Member, Notification, Role, View, Workspace } from './types';
+import {BoardView,ChannelView,DocumentsView,EmptyAccount,HomeView,LoadingScreen,NavButton,NotificationsView,SearchView,ThreadCollection,TimelineView} from './components/Views';
+import {DocumentDetail,ThreadDetail} from './components/Details';
+import {DiscussionComposer,DocumentEditor,WorkspacePanel,WorkspaceSettings} from './components/Dialogs';
+const LOCAL_KEY = 'threadline-workspaces-v2';
+const ACTIVE_KEY = 'threadline-active-workspace-v2';
+const boardStages: BoardStatus[] = ['backlog', 'planned', 'active', 'review', 'complete'];
+const roleRank: Record<Role, number> = { guest: 0, member: 1, admin: 2, owner: 3 };
+const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || 'TL';
+const dateLabel = (iso: string) => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
+const relative = (iso: string) => {
+    const minutes = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+    if (minutes < 1)
+        return 'now';
+    if (minutes < 60)
+        return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24)
+        return `${hours}h`;
+    return `${Math.floor(hours / 24)}d`;
 };
-type Scope='channel'|'saved'|'all'|'inbox';
-type FeedMode='latest'|'popular'|'unanswered';
-
-const seed:Thread[]=[
-  {id:'1',channel:'engineering',title:'What should our API retry policy look like?',body:'We currently retry all 5xx responses with the same backoff. I think we should separate transient gateway failures from application errors and add jitter before this goes into the mobile release.',author:'Maya Chen',initials:'MC',time:'18m',tags:['api','reliability'],likes:14,views:86,saved:true,solved:true,replies:[{id:'r1',author:'Alex Rivera',initials:'AR',time:'12m',body:'I would cap client retries at 2 and move any longer retry strategy to the job layer. That keeps request latency predictable.',helpful:3},{id:'r2',author:'Noah Ragan',initials:'NR',time:'6m',body:'Agreed. We can also honor Retry-After when upstream gives us one and document which error classes are safe to replay.',helpful:2}]},
-  {id:'2',channel:'product',title:'Decision: simplify the free workspace limits',body:'Posting the outcome from today’s pricing review so we have one durable source of truth. Free workspaces will keep unlimited viewers and cap active editors at three.',author:'Jamie Lee',initials:'JL',time:'42m',tags:['decision','pricing'],likes:21,views:132,saved:false,solved:true,replies:[{id:'r3',author:'Noah Ragan',initials:'NR',time:'31m',body:'This makes the upgrade boundary a lot easier to explain in-product. I’ll update the empty state copy.',helpful:4}]},
-  {id:'3',channel:'design',title:'Small accessibility audit findings',body:'I ran a keyboard-only pass on the settings area. Most flows are solid, but modal focus restoration and two icon-only actions need attention before release.',author:'Avery Morgan',initials:'AM',time:'1h',tags:['a11y','design-system'],likes:9,views:54,saved:false,replies:[]},
-  {id:'4',channel:'engineering',title:'Patterns for optimistic updates with rollback',body:'Collecting examples of where we already use optimistic UI successfully and where we should avoid it. Comments and reactions feel safe; billing settings probably do not.',author:'Noah Ragan',initials:'NR',time:'2h',tags:['frontend','architecture'],likes:18,views:110,saved:true,replies:[{id:'r4',author:'Maya Chen',initials:'MC',time:'1h',body:'A small mutation state machine would make rollback behavior consistent without tying us to a specific data library.',helpful:6}]},
-  {id:'5',channel:'research',title:'Customer interview notes: onboarding week 34',body:'Three recurring themes this week: people understand projects quickly, invite teammates later than expected, and want examples before creating their first workflow.',author:'Sam Kim',initials:'SK',time:'3h',tags:['research','onboarding'],likes:11,views:70,saved:false,replies:[]}
-];
-
-const channels=['engineering','product','design','research','random'] as const;
-const STORE='threadline-v1';
-
-function cloneSeed(){return structuredClone(seed)}
-function isReply(value:unknown):value is ReplyT{
-  if(!value||typeof value!=='object')return false;
-  const item=value as Partial<ReplyT>;
-  return typeof item.id==='string'&&typeof item.author==='string'&&typeof item.body==='string';
-}
-function isThread(value:unknown):value is Thread{
-  if(!value||typeof value!=='object')return false;
-  const item=value as Partial<Thread>;
-  return typeof item.id==='string'&&typeof item.channel==='string'&&typeof item.title==='string'&&typeof item.body==='string'&&Array.isArray(item.tags)&&Array.isArray(item.replies)&&item.replies.every(isReply)&&typeof item.likes==='number'&&typeof item.views==='number'&&typeof item.saved==='boolean';
-}
-function readThreads():Thread[]{
-  try{
-    const parsed=JSON.parse(localStorage.getItem(STORE)||'null');
-    return Array.isArray(parsed)&&parsed.every(isThread)?parsed:cloneSeed();
-  }catch{return cloneSeed()}
-}
-function persistThreads(threads:Thread[]){try{localStorage.setItem(STORE,JSON.stringify(threads))}catch{/* Browser storage can be unavailable; keep the in-memory workspace usable. */}}
-
-export default function App(){
-  const [threads,setThreads]=useState<Thread[]>(readThreads);
-  const [selected,setSelected]=useState('1');
-  const [channel,setChannel]=useState('engineering');
-  const [scope,setScope]=useState<Scope>('channel');
-  const [feedMode,setFeedMode]=useState<FeedMode>('latest');
-  const [query,setQuery]=useState('');
-  const [composer,setComposer]=useState(false);
-  const [settingsOpen,setSettingsOpen]=useState(false);
-  const [mobileNav,setMobileNav]=useState(false);
-  const [detailOpen,setDetailOpen]=useState(false);
-  const [toast,setToast]=useState('');
-  const searchRef=useRef<HTMLInputElement>(null);
-
-  useEffect(()=>persistThreads(threads),[threads]);
-  useEffect(()=>{
-    if(!toast)return;
-    const timer=setTimeout(()=>setToast(''),2200);
-    return()=>clearTimeout(timer);
-  },[toast]);
-  useEffect(()=>{
-    const onKey=(event:KeyboardEvent)=>{
-      if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){
-        event.preventDefault();searchRef.current?.focus();
-      }
-      if(event.key==='Escape'){
-        if(settingsOpen)setSettingsOpen(false);
-        else if(composer)setComposer(false);
-        else if(detailOpen)closeDetail();
-        else if(mobileNav)setMobileNav(false);
-      }
-    };
-    window.addEventListener('keydown',onKey);
-    return()=>window.removeEventListener('keydown',onKey);
-  },[composer,detailOpen,mobileNav,settingsOpen]);
-  useEffect(()=>{
-    const id=window.location.hash.startsWith('#thread-')?window.location.hash.slice(8):'';
-    if(id&&threads.some(thread=>thread.id===id)){
-      setSelected(id);setScope('all');setDetailOpen(true);
+const normalizeEmail = (email: string) => email.trim().toLowerCase();
+const clone = <T,>(value: T): T => structuredClone(value);
+function readLocalWorkspaces(): Workspace[] {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(LOCAL_KEY) || 'null');
+        if (Array.isArray(parsed) && parsed.length)
+            return parsed;
     }
-  },[]);
-
-  const visible=useMemo(()=>{
-    const q=query.trim().toLowerCase();
-    let next=threads.filter(thread=>{
-      const inScope=scope==='saved'?thread.saved:scope==='all'?true:scope==='inbox'?!thread.solved:thread.channel===channel;
-      const matches=!q||`${thread.title} ${thread.body} ${thread.tags.join(' ')} ${thread.author} ${thread.channel}`.toLowerCase().includes(q);
-      const feedMatch=feedMode!=='unanswered'||thread.replies.length===0;
-      return inScope&&matches&&feedMatch;
-    });
-    if(feedMode==='popular')next=[...next].sort((a,b)=>(b.likes+b.views)-(a.likes+a.views));
-    return next;
-  },[threads,scope,channel,query,feedMode]);
-
-  useEffect(()=>{
-    if(visible.length&& !visible.some(thread=>thread.id===selected))setSelected(visible[0].id);
-    if(!visible.length)setDetailOpen(false);
-  },[visible,selected]);
-
-  const active=visible.find(thread=>thread.id===selected)??visible[0];
-  const heading=scope==='saved'?'saved':scope==='all'?'all':scope==='inbox'?'inbox':channel;
-  const description=scope==='saved'
-    ?'The discussions and decisions you wanted to keep close.'
-    :scope==='all'
-      ?'Everything your team has documented across the workspace.'
-      :scope==='inbox'
-        ?'Open questions and unresolved context that still need a decision.'
-        :channel==='engineering'
-          ?'Architecture, implementation, incidents, and useful technical context.'
-          :'Shared context your team can find again later.';
-
-  const toggleSave=(id:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,saved:!thread.saved}:thread));
-  const like=(id:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,likes:thread.likes+1}:thread));
-  const reply=(id:string,body:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,replies:[...thread.replies,{id:crypto.randomUUID(),author:'Noah Ragan',initials:'NR',time:'now',body,helpful:0}]}:thread));
-  const helpful=(threadId:string,replyId:string)=>setThreads(current=>current.map(thread=>thread.id===threadId?{...thread,replies:thread.replies.map(item=>item.id===replyId?{...item,helpful:(item.helpful??0)+1}:item)}:thread));
-  const toggleSolved=(id:string)=>{
-    let nextState=false;
-    setThreads(current=>current.map(thread=>{if(thread.id!==id)return thread;nextState=!thread.solved;return {...thread,solved:nextState}}));
-    setToast(nextState?'Thread marked resolved':'Thread reopened');
-  };
-  const deleteThread=(id:string)=>{
-    const thread=threads.find(item=>item.id===id);
-    if(!thread||!window.confirm(`Delete “${thread.title}”?`))return;
-    setThreads(current=>current.filter(item=>item.id!==id));closeDetail();setToast('Thread deleted');
-  };
-  const openThread=(id:string)=>{
-    setSelected(id);setDetailOpen(true);
-    setThreads(current=>current.map(thread=>thread.id===id?{...thread,views:thread.views+1}:thread));
-    window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}#thread-${id}`);
-  };
-  const closeDetail=()=>{
-    setDetailOpen(false);
-    window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}`);
-  };
-  const chooseChannel=(next:string)=>{
-    setChannel(next);setScope('channel');setFeedMode('latest');setMobileNav(false);closeDetail();
-  };
-  const changeScope=(next:Scope)=>{
-    setScope(next);setFeedMode('latest');setMobileNav(false);closeDetail();
-  };
-  const resetWorkspace=()=>{
-    if(!window.confirm('Reset Threadline to the original sample workspace?'))return;
-    setThreads(cloneSeed());setSelected('1');setChannel('engineering');setScope('channel');setFeedMode('latest');setQuery('');setSettingsOpen(false);closeDetail();setToast('Workspace reset');
-  };
-  const signIn=async()=>{
-    if(!firebaseReady){setToast('Demo mode — add Firebase keys to enable Google sign-in');return}
-    try{await signInGoogle();setToast('Signed in with Google')}
-    catch{setToast('Google sign-in was cancelled or unavailable')}
-  };
-
-  return <div className="shell">
-    <aside className={mobileNav?'rail open':'rail'}>
+    catch { /* use seed */ }
+    return [createDemoWorkspace()];
+}
+function writeLocalWorkspaces(workspaces: Workspace[]) { try {
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(workspaces));
+}
+catch { /* local mode remains usable in memory */ } }
+export default function App() {
+    const [localWorkspaces, setLocalWorkspaces] = useState<Workspace[]>(readLocalWorkspaces);
+    const [cloudWorkspaces, setCloudWorkspaces] = useState<Workspace[]>([]);
+    const [cloudUser, setCloudUser] = useState<CurrentUser | null>(null);
+    const [cloudLoading, setCloudLoading] = useState(firebaseReady);
+    const [activeId, setActiveId] = useState(() => localStorage.getItem(ACTIVE_KEY) || readLocalWorkspaces()[0]?.id || '');
+    const [view, setView] = useState<View>('home');
+    const [channelId, setChannelId] = useState('general');
+    const [query, setQuery] = useState('');
+    const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+    const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+    const [mobileNav, setMobileNav] = useState(false);
+    const [composerOpen, setComposerOpen] = useState(false);
+    const [documentEditor, setDocumentEditor] = useState<KnowledgeDocument | null | undefined>(undefined);
+    const [workspacePanel, setWorkspacePanel] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [toast, setToast] = useState('');
+    const searchRef = useRef<HTMLInputElement>(null);
+    const usingCloud = Boolean(firebaseReady && cloudUser);
+    const workspaces = usingCloud ? cloudWorkspaces : localWorkspaces;
+    const workspace = workspaces.find(item => item.id === activeId) ?? workspaces[0];
+    const demoOwner = workspace?.members.find(member => member.role === 'owner') ?? workspace?.members[0];
+    const currentUser: CurrentUser = cloudUser ?? {
+        id: demoOwner?.id || 'demo-owner', name: demoOwner?.name || 'Jordan Blake', email: demoOwner?.email || 'jordan@northstar.example', initials: demoOwner?.initials || 'JB'
+    };
+    const currentMember = workspace?.members.find(member => normalizeEmail(member.email) === normalizeEmail(currentUser.email));
+    const currentRole: Role = currentMember?.role ?? (usingCloud ? 'guest' : 'owner');
+    const canWrite = roleRank[currentRole] >= roleRank.member;
+    const canManage = roleRank[currentRole] >= roleRank.admin;
+    useEffect(() => {
+        if (!firebaseReady) {
+            setCloudLoading(false);
+            return;
+        }
+        return watchAuth(user => {
+            if (!user?.email) {
+                setCloudUser(null);
+                setCloudWorkspaces([]);
+                setCloudLoading(false);
+                return;
+            }
+            setCloudUser({ id: user.uid, name: user.displayName || user.email.split('@')[0], email: normalizeEmail(user.email), initials: initials(user.displayName || user.email), avatar: user.photoURL || undefined });
+            setCloudLoading(true);
+        });
+    }, []);
+    useEffect(() => {
+        if (!cloudUser?.email)
+            return;
+        return watchWorkspaces(cloudUser.email, items => {
+            setCloudWorkspaces(items);
+            setCloudLoading(false);
+            if (items.length && !items.some(item => item.id === activeId))
+                setActiveId(items[0].id);
+        }, () => { setCloudLoading(false); setToast('Could not load shared workspaces. Check Firestore rules and connection.'); });
+    }, [cloudUser?.email]);
+    useEffect(() => { if (!usingCloud)
+        writeLocalWorkspaces(localWorkspaces); }, [localWorkspaces, usingCloud]);
+    useEffect(() => { if (activeId)
+        localStorage.setItem(ACTIVE_KEY, activeId); }, [activeId]);
+    useEffect(() => { if (!toast)
+        return; const timer = setTimeout(() => setToast(''), 2600); return () => clearTimeout(timer); }, [toast]);
+    useEffect(() => {
+        const handler = (event: KeyboardEvent) => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+                event.preventDefault();
+                searchRef.current?.focus();
+            }
+            if (event.key === 'Escape') {
+                if (settingsOpen)
+                    setSettingsOpen(false);
+                else if (workspacePanel)
+                    setWorkspacePanel(false);
+                else if (composerOpen)
+                    setComposerOpen(false);
+                else if (documentEditor !== undefined)
+                    setDocumentEditor(undefined);
+                else if (selectedThreadId || selectedDocumentId)
+                    closeDetail();
+                else
+                    setMobileNav(false);
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [settingsOpen, workspacePanel, composerOpen, documentEditor, selectedThreadId, selectedDocumentId]);
+    useEffect(() => {
+        const hash = window.location.hash;
+        if (hash.startsWith('#thread-')) {
+            setSelectedThreadId(hash.slice(8));
+            setSelectedDocumentId(null);
+        }
+        if (hash.startsWith('#doc-')) {
+            setSelectedDocumentId(hash.slice(5));
+            setSelectedThreadId(null);
+            setView('documents');
+        }
+    }, []);
+    const commitWorkspace = (updater: (current: Workspace) => Workspace, success?: string) => {
+        if (!workspace)
+            return;
+        const previous = workspace;
+        const next = { ...updater(clone(workspace)), updatedAt: new Date().toISOString() };
+        const apply = (items: Workspace[]) => items.map(item => item.id === next.id ? next : item);
+        if (usingCloud) {
+            setCloudWorkspaces(apply);
+            void saveRemoteWorkspace(next).then(() => { if (success)
+                setToast(success); }).catch(() => { setCloudWorkspaces(items => items.map(item => item.id === previous.id ? previous : item)); setToast('That change was rejected or could not be saved.'); });
+        }
+        else {
+            setLocalWorkspaces(apply);
+            if (success)
+                setToast(success);
+        }
+    };
+    const addActivity = (draft: Workspace, activity: Omit<Activity, 'id' | 'createdAt' | 'actorName'>) => {
+        draft.activity = [{ ...activity, id: crypto.randomUUID(), actorName: currentUser.name, createdAt: new Date().toISOString() }, ...draft.activity].slice(0, 80);
+    };
+    const notify = (draft: Workspace, notification: Omit<Notification, 'id' | 'createdAt' | 'read'>) => {
+        draft.notifications = [{ ...notification, id: crypto.randomUUID(), createdAt: new Date().toISOString(), read: false }, ...draft.notifications].slice(0, 120);
+    };
+    const chooseView = (next: View) => { setView(next); setQuery(''); setMobileNav(false); if (next !== 'channel')
+        setChannelId(channelId); closeDetail(); };
+    const chooseChannel = (id: string) => { setChannelId(id); setView('channel'); setQuery(''); setMobileNav(false); closeDetail(); };
+    const openThread = (id: string) => { setSelectedThreadId(id); setSelectedDocumentId(null); window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#thread-${id}`); if (canWrite)
+        commitWorkspace(draft => { const thread = draft.threads.find(item => item.id === id); if (thread)
+            thread.views += 1; return draft; }); };
+    const openDocument = (id: string) => { setSelectedDocumentId(id); setSelectedThreadId(null); setView('documents'); window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#doc-${id}`); };
+    const closeDetail = () => { setSelectedThreadId(null); setSelectedDocumentId(null); window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); };
+    const activeThread = workspace?.threads.find(item => item.id === selectedThreadId);
+    const activeDocument = workspace?.documents.find(item => item.id === selectedDocumentId);
+    const unread = workspace?.notifications.filter(item => normalizeEmail(item.recipientEmail) === normalizeEmail(currentUser.email) && !item.read).length ?? 0;
+    const searchResults = useMemo(() => {
+        if (!workspace || !query.trim())
+            return { threads: [] as Discussion[], documents: [] as KnowledgeDocument[] };
+        const q = query.trim().toLowerCase();
+        return {
+            threads: workspace.threads.filter(thread => `${thread.title} ${thread.body} ${thread.authorName} ${thread.tags.join(' ')} ${workspace.channels.find(channel => channel.id === thread.channelId)?.name || ''} ${thread.resolution || ''}`.toLowerCase().includes(q)),
+            documents: workspace.documents.filter(doc => `${doc.title} ${doc.content} ${doc.tags.join(' ')} ${doc.lastEditorName}`.toLowerCase().includes(q))
+        };
+    }, [workspace, query]);
+    const startWorkspace = async (name: string, description: string) => {
+        const now = new Date().toISOString();
+        const id = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'workspace'}-${crypto.randomUUID().slice(0, 6)}`;
+        const email = normalizeEmail(currentUser.email);
+        const next: Workspace = { id, name: name.trim(), description: description.trim(), ownerId: currentUser.id, ownerEmail: email, memberEmails: [email], adminEmails: [email], guestEmails: [], members: [{ id: currentUser.id, name: currentUser.name, email, initials: currentUser.initials, role: 'owner', joinedAt: now, avatar: currentUser.avatar }], channels: [{ id: 'general', name: 'general', description: 'Workspace-wide discussion and shared context.' }], threads: [], documents: [], activity: [{ id: crypto.randomUUID(), type: 'workspace', summary: `Created ${name.trim()}`, actorName: currentUser.name, createdAt: now }], notifications: [], createdAt: now, updatedAt: now };
+        try {
+            if (usingCloud) {
+                await createRemoteWorkspace(next);
+                setCloudWorkspaces(items => [...items, next]);
+            }
+            else
+                setLocalWorkspaces(items => [...items, next]);
+            setActiveId(id);
+            setWorkspacePanel(false);
+            setView('home');
+            setToast('Workspace created');
+        }
+        catch {
+            setToast('Workspace could not be created. Check Firebase access.');
+        }
+    };
+    if (cloudLoading && usingCloud && !workspace)
+        return <LoadingScreen />;
+    if (!workspace)
+        return <EmptyAccount user={cloudUser} onCreate={() => setWorkspacePanel(true)} onSignOut={() => void signOutUser()} panel={workspacePanel ? <WorkspacePanel workspaces={[]} activeId="" onChoose={() => { }} onClose={() => setWorkspacePanel(false)} onCreate={startWorkspace}/> : null}/>;
+    return <div className="shell app-shell">
+    <aside className={mobileNav ? 'rail open' : 'rail'}>
       <div className="logo"><span>t</span>threadline</div>
-      <button className="workspace" onClick={signIn} title={firebaseReady?'Sign in with Google':'Running in demo mode'}>
-        <span className="avatar nr">NR</span>
-        <span><b>Northstar Labs</b><small>{firebaseReady?'Google sign-in ready':'Demo workspace · 8 members'}</small></span>
-        <ChevronDown size={15}/>
+      <button className="workspace" onClick={() => setWorkspacePanel(true)}>
+        <span className="avatar">{workspace.name.slice(0, 2).toUpperCase()}</span><span><b>{workspace.name}</b><small>{workspace.members.length} members · {usingCloud ? 'shared' : 'demo'} workspace</small></span><ChevronDown size={15}/>
       </button>
-      <nav>
-        <button className={scope==='inbox'?'active':''} onClick={()=>changeScope('inbox')}><Inbox/><span>Inbox</span><b>{threads.filter(thread=>!thread.solved).length}</b></button>
-        <button className={scope==='saved'?'active':''} onClick={()=>changeScope('saved')}><Bookmark/><span>Saved</span><b>{threads.filter(thread=>thread.saved).length}</b></button>
-        <button className={scope==='all'?'active':''} onClick={()=>changeScope('all')}><Compass/><span>Explore</span></button>
+      <nav className="primary-nav">
+        <NavButton active={view === 'home'} icon={<Home />} label="Home" onClick={() => chooseView('home')}/>
+        <NavButton active={view === 'notifications'} icon={<Inbox />} label="Inbox" count={unread} onClick={() => chooseView('notifications')}/>
+        <NavButton active={view === 'saved'} icon={<Bookmark />} label="Saved" count={workspace.threads.filter(thread => thread.savedBy.includes(normalizeEmail(currentUser.email))).length} onClick={() => chooseView('saved')}/>
+        <NavButton active={view === 'documents'} icon={<BookOpen />} label="Knowledge" count={workspace.documents.length} onClick={() => chooseView('documents')}/>
+        <NavButton active={view === 'board'} icon={<Kanban />} label="Board" onClick={() => chooseView('board')}/>
+        <NavButton active={view === 'timeline'} icon={<Clock3 />} label="Timeline" onClick={() => chooseView('timeline')}/>
       </nav>
-      <div className="nav-head">Channels <Plus size={14}/></div>
+      <div className="nav-head">Channels {canManage && <button className="tiny-icon" onClick={() => setSettingsOpen(true)} aria-label="Manage channels"><Plus size={13}/></button>}</div>
       <div className="channels">
-        <button className={scope==='all'?'active':''} onClick={()=>changeScope('all')}><Hash/>all threads<b>{threads.length}</b></button>
-        {channels.map(item=>{
-          const count=threads.filter(thread=>thread.channel===item).length;
-          return <button className={scope==='channel'&&channel===item?'active':''} key={item} onClick={()=>chooseChannel(item)}><Hash/>{item}{count>0&&<b>{count}</b>}</button>;
-        })}
+        {workspace.channels.filter(channel => !channel.private || canManage || channel.memberEmails?.includes(normalizeEmail(currentUser.email))).map(channel => <button className={view === 'channel' && channelId === channel.id ? 'active' : ''} key={channel.id} onClick={() => chooseChannel(channel.id)}><Hash />{channel.name}<b>{workspace.threads.filter(thread => thread.channelId === channel.id && thread.status !== 'archived').length}</b></button>)}
       </div>
-      <div className="people">
-        <div className="nav-head">Online now <span>4</span></div>
-        {[['MC','Maya'],['AM','Avery'],['JL','Jamie']].map(([initials,name])=><div key={initials}><span className="avatar">{initials}<i/></span>{name}</div>)}
+      <div className="people member-strip">
+        <div className="nav-head">Members <span>{workspace.members.length}</span></div>
+        {workspace.members.slice(0, 5).map(member => <div key={member.email}><span className="avatar">{member.initials}</span><span>{member.name}<small>{member.role}</small></span></div>)}
       </div>
-      <button className="settings" onClick={()=>{setSettingsOpen(true);setMobileNav(false)}}><Settings/>Workspace settings</button>
+      <div className="rail-bottom">
+        <button className="settings" onClick={() => setSettingsOpen(true)}><Settings />Workspace settings</button>
+        {firebaseReady ? <button className="settings" onClick={() => cloudUser ? void signOutUser() : void signInGoogle()}>{cloudUser ? <LogOut /> : <LogIn />}{cloudUser ? 'Sign out' : 'Sign in to collaborate'}</button> : null}
+      </div>
     </aside>
+    {mobileNav && <button className="nav-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)}/>} 
 
-    <main className="feed">
+    <main className="feed workspace-feed">
       <header>
-        <button className="mobile" onClick={()=>setMobileNav(value=>!value)} aria-label="Toggle workspace navigation"><PanelLeft/></button>
-        <div className="search"><Search/><input ref={searchRef} value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search conversations, decisions, people…" aria-label="Search threads"/><kbd>⌘ K</kbd></div>
-        <button className="bell" onClick={()=>setToast('No new notifications')} aria-label="Notifications"><Bell/><i/></button>
-        <button className="new" onClick={()=>setComposer(true)}><PenLine/>New thread</button>
+        <button className="mobile" onClick={() => setMobileNav(value => !value)} aria-label="Toggle workspace navigation"><PanelLeft /></button>
+        <div className="search"><Search /><input ref={searchRef} value={query} onChange={event => { setQuery(event.target.value); if (event.target.value.trim())
+        setView('search'); }} placeholder="Search anything…" aria-label="Search discussions and documents"/><kbd>⌘ K</kbd></div>
+        <button className="bell" onClick={() => chooseView('notifications')} aria-label="Notifications"><Bell />{unread > 0 && <i />}</button>
+        {canWrite && <button className="new" onClick={() => setComposerOpen(true)}><PenLine />New discussion</button>}
       </header>
 
-      <section className="feed-head">
-        <div><span className="eyebrow">Workspace discussions</span><h1>#{heading}</h1><p>{description}</p></div>
-        <div className="faces"><span>MC</span><span>AR</span><span>NR</span><b>+5</b></div>
-      </section>
-
-      <div className="filters">
-        {(['latest','popular','unanswered'] as FeedMode[]).map(mode=><button key={mode} className={feedMode===mode?'active':''} onClick={()=>setFeedMode(mode)}>{mode[0].toUpperCase()+mode.slice(1)}</button>)}
-        <span>{visible.length} {visible.length===1?'thread':'threads'}</span>
-      </div>
-
-      <div className="thread-list">
-        {visible.length===0&&<div className="empty">No threads match this view.</div>}
-        {visible.map(thread=><article key={thread.id} className={active?.id===thread.id?'thread selected':'thread'}>
-          <button className="thread-open-overlay" onClick={()=>openThread(thread.id)} aria-label={`Open thread: ${thread.title}`}/>
-          <div className={`avatar big a${thread.initials.charCodeAt(0)%4}`}>{thread.initials}</div>
-          <div>
-            <div className="thread-meta"><b>{thread.author}</b><span>{thread.time} ago · #{thread.channel}</span>{thread.solved&&<em><CheckCircle2/>Resolved</em>}</div>
-            <h2>{thread.title}</h2><p>{thread.body}</p>
-            <div className="tags">{thread.tags.map(tag=><span key={tag}>{tag}</span>)}</div>
-            <div className="stats"><span><ThumbsUp/>{thread.likes}</span><span><MessageSquare/>{thread.replies.length}</span><span><Clock3/>{thread.views} views</span></div>
-          </div>
-          <button className={thread.saved?'save saved':'save'} aria-label={thread.saved?'Remove from saved':'Save thread'} onClick={()=>toggleSave(thread.id)}><Bookmark/></button>
-        </article>)}
-      </div>
+      {view === 'home' && <HomeView workspace={workspace} currentUser={currentUser} onOpenThread={openThread} onOpenDocument={openDocument}/>} 
+      {view === 'channel' && <ChannelView workspace={workspace} channelId={channelId} onOpenThread={openThread}/>} 
+      {view === 'saved' && <ThreadCollection title="Saved" description="Discussions you bookmarked for quick reference." threads={workspace.threads.filter(thread => thread.savedBy.includes(normalizeEmail(currentUser.email)))} workspace={workspace} onOpenThread={openThread}/>} 
+      {view === 'documents' && <DocumentsView workspace={workspace} canWrite={canWrite} onOpen={openDocument} onCreate={() => setDocumentEditor(null)}/>} 
+      {view === 'board' && <BoardView workspace={workspace} canWrite={canWrite} onOpen={openThread} onMove={(threadId, status) => commitWorkspace(draft => { const thread = draft.threads.find(item => item.id === threadId); if (thread) {
+        thread.boardStatus = status;
+        thread.updatedAt = new Date().toISOString();
+        addActivity(draft, { type: 'discussion', summary: `Moved “${thread.title}” to ${status}`, targetId: thread.id });
+    } return draft; }, 'Board updated')}/>} 
+      {view === 'timeline' && <TimelineView workspace={workspace} onOpenThread={openThread} onOpenDocument={openDocument}/>} 
+      {view === 'notifications' && <NotificationsView notifications={workspace.notifications.filter(item => normalizeEmail(item.recipientEmail) === normalizeEmail(currentUser.email))} onOpenThread={openThread} onOpenDocument={openDocument} onMarkRead={id => commitWorkspace(draft => { const item = draft.notifications.find(notification => notification.id === id); if (item)
+        item.read = true; return draft; })} onMarkAll={() => commitWorkspace(draft => { draft.notifications.forEach(item => { if (normalizeEmail(item.recipientEmail) === normalizeEmail(currentUser.email))
+        item.read = true; }); return draft; }, 'Inbox cleared')}/>} 
+      {view === 'search' && <SearchView query={query} results={searchResults} workspace={workspace} onOpenThread={openThread} onOpenDocument={openDocument}/>} 
     </main>
 
-    <aside className={detailOpen?'detail detail-open':'detail'} aria-label="Thread details">
-      <button className="detail-close" onClick={closeDetail} aria-label="Close thread details"><X/></button>
-      {active?<ThreadDetail thread={active} onLike={()=>like(active.id)} onSave={()=>toggleSave(active.id)} onReply={body=>{reply(active.id,body);setToast('Reply posted')}} onHelpful={replyId=>helpful(active.id,replyId)} onToggleSolved={()=>toggleSolved(active.id)} onDelete={()=>deleteThread(active.id)} onToast={setToast}/>:<div className="empty">No thread selected.</div>}
+    <aside className={(activeThread || activeDocument) ? 'detail detail-open' : 'detail'} aria-label="Content details">
+      <button className="detail-close" onClick={closeDetail} aria-label="Close details"><X /></button>
+      {activeThread && <ThreadDetail thread={activeThread} workspace={workspace} currentUser={currentUser} canWrite={canWrite} canManage={canManage} onUpdate={update => commitWorkspace(draft => { const index = draft.threads.findIndex(item => item.id === activeThread.id); if (index >= 0)
+        draft.threads[index] = update(draft.threads[index]); return draft; })} onReply={body => commitWorkspace(draft => { const thread = draft.threads.find(item => item.id === activeThread.id); if (!thread)
+        return draft; thread.replies.push({ id: crypto.randomUUID(), authorId: currentUser.id, authorName: currentUser.name, authorEmail: normalizeEmail(currentUser.email), initials: currentUser.initials, body, createdAt: new Date().toISOString(), reactions: [] }); thread.updatedAt = new Date().toISOString(); addActivity(draft, { type: 'discussion', summary: `Replied to “${thread.title}”`, targetId: thread.id }); for (const member of draft.members) {
+        if (member.email !== normalizeEmail(currentUser.email) && body.toLowerCase().includes(`@${member.name.toLowerCase().split(' ')[0]}`))
+            notify(draft, { recipientEmail: member.email, text: `${currentUser.name} mentioned you in “${thread.title}”.`, targetThreadId: thread.id });
+    } return draft; }, 'Reply posted')} onResolve={() => { const resolution = window.prompt('Record the decision or outcome for this discussion:', activeThread.resolution || ''); if (resolution === null)
+        return; commitWorkspace(draft => { const thread = draft.threads.find(item => item.id === activeThread.id); if (thread) {
+        thread.status = 'resolved';
+        thread.boardStatus = 'complete';
+        thread.resolution = resolution.trim() || 'Resolved without a written summary.';
+        thread.resolvedBy = currentUser.name;
+        thread.resolvedAt = new Date().toISOString();
+        thread.updatedAt = new Date().toISOString();
+        addActivity(draft, { type: 'resolution', summary: `Resolved “${thread.title}”`, targetId: thread.id });
+        for (const member of draft.members) {
+            if (member.email !== normalizeEmail(currentUser.email))
+                notify(draft, { recipientEmail: member.email, text: `${currentUser.name} resolved “${thread.title}”.`, targetThreadId: thread.id });
+        }
+    } return draft; }, 'Discussion resolved'); }} onDelete={() => { if (!window.confirm(`Delete “${activeThread.title}”?`))
+        return; commitWorkspace(draft => { draft.threads = draft.threads.filter(item => item.id !== activeThread.id); addActivity(draft, { type: 'discussion', summary: `Deleted “${activeThread.title}”` }); return draft; }, 'Discussion deleted'); closeDetail(); }} onOpenDocument={openDocument} onToast={setToast}/>} 
+      {activeDocument && <DocumentDetail document={activeDocument} workspace={workspace} canWrite={canWrite} currentUser={currentUser} onEdit={() => setDocumentEditor(activeDocument)} onOpenThread={openThread} onRestore={versionId => commitWorkspace(draft => { const doc = draft.documents.find(item => item.id === activeDocument.id); const version = doc?.versions.find(item => item.id === versionId); if (doc && version) {
+        doc.versions.push({ id: crypto.randomUUID(), title: doc.title, content: doc.content, editorName: currentUser.name, editorEmail: normalizeEmail(currentUser.email), createdAt: new Date().toISOString() });
+        doc.title = version.title;
+        doc.content = version.content;
+        doc.lastEditorName = currentUser.name;
+        doc.lastEditorEmail = normalizeEmail(currentUser.email);
+        doc.updatedAt = new Date().toISOString();
+        addActivity(draft, { type: 'document', summary: `Restored an earlier version of “${doc.title}”`, targetId: doc.id });
+    } return draft; }, 'Version restored')}/>} 
+      {!activeThread && !activeDocument && <div className="detail-placeholder"><MessageSquare /><b>Open a discussion or document</b><span>Context, decisions, replies, and related knowledge appear here.</span></div>}
     </aside>
 
-    {composer&&<Composer channel={scope==='channel'?channel:'engineering'} onClose={()=>setComposer(false)} onCreate={thread=>{setThreads(current=>[thread,...current]);setSelected(thread.id);setChannel(thread.channel);setScope('channel');setFeedMode('latest');setComposer(false);setDetailOpen(true);window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}#thread-${thread.id}`);setToast('Thread published')}}/>}
-    {settingsOpen&&<SettingsPanel onClose={()=>setSettingsOpen(false)} onReset={resetWorkspace}/>} 
-    {toast&&<div className="toast"><CheckCircle2/>{toast}</div>}
-  </div>
-}
-
-function ThreadDetail({thread,onLike,onSave,onReply,onHelpful,onToggleSolved,onDelete,onToast}:{thread:Thread;onLike:()=>void;onSave:()=>void;onReply:(body:string)=>void;onHelpful:(replyId:string)=>void;onToggleSolved:()=>void;onDelete:()=>void;onToast:(message:string)=>void}){
-  const [body,setBody]=useState('');
-  const replyRef=useRef<HTMLTextAreaElement>(null);
-  const copyLink=async()=>{
-    const url=`${window.location.origin}${window.location.pathname}${window.location.search}#thread-${thread.id}`;
-    try{await navigator.clipboard.writeText(url);onToast('Thread link copied')}
-    catch{onToast('Copy failed — your browser blocked clipboard access')}
-  };
-  return <div className="detail-inner">
-    <div className="detail-top"><span>Thread</span><div><button onClick={onSave} className={thread.saved?'active':''} aria-label="Save thread"><Bookmark/></button><button className={thread.solved?'resolved-toggle active':'resolved-toggle'} onClick={onToggleSolved} aria-label={thread.solved?'Reopen thread':'Mark thread resolved'}><CheckCircle2/></button><button className="danger-icon" onClick={onDelete} aria-label="Delete thread"><Trash2/></button></div></div>
-    <div className="author"><span className="avatar big">{thread.initials}</span><div><b>{thread.author}</b><small>#{thread.channel} · {thread.time} ago</small></div></div>
-    <h2>{thread.title}</h2><p className="body">{thread.body}</p>
-    <div className="detail-actions"><button onClick={onLike}><ThumbsUp/>{thread.likes}</button><button onClick={()=>replyRef.current?.focus()}><Reply/>Reply</button><button onClick={copyLink}><Link2/>Copy link</button></div>
-    {thread.solved&&<div className="resolved"><CheckCircle2/><div><b>Marked as resolved</b><span>This thread contains a confirmed answer or decision.</span></div></div>}
-    <div className="reply-head"><b>{thread.replies.length} {thread.replies.length===1?'reply':'replies'}</b><span>Newest first</span></div>
-    <div className="replies">{thread.replies.slice().reverse().map(item=><article key={item.id}><span className="avatar">{item.initials}</span><div><b>{item.author}<small>{item.time} ago</small></b><p>{item.body}</p><button type="button" onClick={()=>onHelpful(item.id)}><ThumbsUp/>Helpful{item.helpful?` · ${item.helpful}`:''}</button></div></article>)}</div>
-    <form className="reply-box" onSubmit={event=>{event.preventDefault();if(body.trim()){onReply(body.trim());setBody('')}}}>
-      <span className="avatar nr">NR</span><div><textarea ref={replyRef} value={body} onChange={event=>setBody(event.target.value)} placeholder="Add useful context…" aria-label="Reply text"/><div><span>Plain text reply</span><button><Send/>Reply</button></div></div>
-    </form>
-  </div>
-}
-
-function Composer({channel,onClose,onCreate}:{channel:string;onClose:()=>void;onCreate:(thread:Thread)=>void}){
-  const [title,setTitle]=useState('');
-  const [body,setBody]=useState('');
-  const [selectedChannel,setSelectedChannel]=useState(channel);
-  const [tags,setTags]=useState('');
-  return <div className="overlay" onMouseDown={onClose}>
-    <form className="composer" onMouseDown={event=>event.stopPropagation()} onSubmit={event=>{event.preventDefault();if(title.trim()&&body.trim())onCreate({id:crypto.randomUUID(),channel:selectedChannel,title:title.trim(),body:body.trim(),author:'Noah Ragan',initials:'NR',time:'now',tags:tags.split(',').map(tag=>tag.trim()).filter(Boolean),likes:0,views:1,saved:false,replies:[]})}}>
-      <button type="button" className="close" onClick={onClose} aria-label="Close composer"><X/></button>
-      <span className="compose-icon"><Sparkles/></span><h2>Start a useful thread</h2><p>Ask a question, document a decision, or leave context future-you will be glad to find.</p>
-      <label>Title<input autoFocus required value={title} onChange={event=>setTitle(event.target.value)} placeholder="What should people know?"/></label>
-      <label>Channel<select value={selectedChannel} onChange={event=>setSelectedChannel(event.target.value)}>{channels.map(item=><option key={item}>{item}</option>)}</select></label>
-      <label>Details<textarea required value={body} onChange={event=>setBody(event.target.value)} placeholder="Add enough context for someone who wasn't in the room…"/></label>
-      <label>Tags<input value={tags} onChange={event=>setTags(event.target.value)} placeholder="api, reliability, decision"/></label>
-      <button className="publish"><Send/>Publish thread</button>
-    </form>
-  </div>
-}
-
-function SettingsPanel({onClose,onReset}:{onClose:()=>void;onReset:()=>void}){
-  return <div className="overlay" onMouseDown={onClose}><section className="settings-panel" onMouseDown={event=>event.stopPropagation()}>
-    <button type="button" className="close" onClick={onClose} aria-label="Close settings"><X/></button>
-    <span className="compose-icon"><Settings/></span><h2>Workspace settings</h2><p>Threadline is fully usable in local-first mode. Connect Firebase last when you’re ready to give each user a private identity and hosted workspace.</p>
-    <div className="settings-row"><span><ShieldCheck/><b>Authentication</b></span><strong>{firebaseReady?'Firebase configured':'Demo identity'}</strong></div>
-    <div className="settings-row"><span><Bookmark/><b>Persistence</b></span><strong>Browser workspace</strong></div>
-    <button className="reset-workspace" onClick={onReset}><RotateCcw/>Reset sample workspace</button>
-  </section></div>
+    {composerOpen && <DiscussionComposer workspace={workspace} currentUser={currentUser} defaultChannel={view === 'channel' ? channelId : 'general'} onClose={() => setComposerOpen(false)} onCreate={thread => { commitWorkspace(draft => { draft.threads = [thread, ...draft.threads]; addActivity(draft, { type: 'discussion', summary: `Started “${thread.title}”`, targetId: thread.id }); return draft; }, 'Discussion published'); setComposerOpen(false); setView('channel'); setChannelId(thread.channelId); openThread(thread.id); }}/>} 
+    {documentEditor !== undefined && <DocumentEditor workspace={workspace} currentUser={currentUser} document={documentEditor} onClose={() => setDocumentEditor(undefined)} onSave={doc => { commitWorkspace(draft => { const existing = draft.documents.find(item => item.id === doc.id); if (existing) {
+        const previous = { id: crypto.randomUUID(), title: existing.title, content: existing.content, editorName: existing.lastEditorName, editorEmail: existing.lastEditorEmail, createdAt: existing.updatedAt };
+        doc.versions = [...existing.versions, previous];
+    }
+    else
+        addActivity(draft, { type: 'document', summary: `Created “${doc.title}”`, targetId: doc.id }); draft.documents = existing ? draft.documents.map(item => item.id === doc.id ? doc : item) : [doc, ...draft.documents]; if (existing)
+        addActivity(draft, { type: 'document', summary: `Updated “${doc.title}”`, targetId: doc.id }); return draft; }, 'Document saved'); setDocumentEditor(undefined); openDocument(doc.id); }}/>} 
+    {workspacePanel && <WorkspacePanel workspaces={workspaces} activeId={workspace.id} onChoose={id => { setActiveId(id); setWorkspacePanel(false); setView('home'); closeDetail(); }} onClose={() => setWorkspacePanel(false)} onCreate={startWorkspace}/>} 
+    {settingsOpen && <WorkspaceSettings workspace={workspace} currentUser={currentUser} canManage={canManage} usingCloud={usingCloud} onClose={() => setSettingsOpen(false)} onUpdate={(updater, message) => commitWorkspace(updater, message)} onReset={() => { if (usingCloud || !window.confirm('Reset the demo workspace and remove local changes?'))
+        return; const demo = createDemoWorkspace(); setLocalWorkspaces(items => items.map(item => item.id === workspace.id ? demo : item)); setActiveId(demo.id); setSettingsOpen(false); setToast('Demo workspace reset'); }}/>} 
+    {toast && <div className="toast"><CheckCircle2 />{toast}</div>}
+  </div>;
 }

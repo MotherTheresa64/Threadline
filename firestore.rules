@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null && request.auth.token.email_verified == true;
+    }
+
+    function email() {
+      return request.auth.token.email;
+    }
+
+    function isMember(data) {
+      return signedIn() && email() in data.memberEmails;
+    }
+
+    function isAdmin(data) {
+      return signedIn() && email() in data.adminEmails;
+    }
+
+    function isGuest(data) {
+      return signedIn() && email() in data.guestEmails;
+    }
+
+    match /workspaces/{workspaceId} {
+      allow create: if signedIn()
+        && request.resource.data.ownerEmail == email()
+        && request.resource.data.memberEmails == [email()]
+        && request.resource.data.adminEmails == [email()]
+        && request.resource.data.guestEmails == [];
+
+      allow read: if isMember(resource.data);
+
+      // Owners/admins can manage membership, channels, settings, and content.
+      allow update: if isAdmin(resource.data)
+        // Regular members can collaborate on shared content but cannot change
+        // membership, roles, channels, or workspace identity.
+        || (isMember(resource.data)
+          && !isGuest(resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'threads', 'documents', 'activity', 'notifications', 'updatedAt'
+          ]));
+
+      allow delete: if signedIn() && resource.data.ownerEmail == email();
+    }
+  }
+}
