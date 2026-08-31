@@ -2,6 +2,8 @@
 
 **Conversations that become knowledge.** Threadline is a collaborative discussion workspace for turning team questions, decisions, and implementation context into durable knowledge instead of letting useful information disappear in chat.
 
+**Live demo:** https://threadline-ga8w.onrender.com
+
 ## What works today
 
 - Channel-based workspace with Engineering, Product, Design, Research, and shared views
