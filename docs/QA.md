@@ -12,6 +12,19 @@ Use this after a local build and again against the deployed Render URL.
 - [ ] Error boundary presents a branded recovery screen if rendering fails.
 - [ ] Workspace reset restores the original sample data.
 
+## Appearance / personalization
+
+- [ ] Appearance control is reachable by mouse, touch, and keyboard.
+- [ ] Paper, Moss, Lavender, and Night can each be selected.
+- [ ] Selected theme survives a hard refresh.
+- [ ] Browser theme-color changes with the active reading theme.
+- [ ] Feed, detail pane, composer, settings, filters, reply box, and drawer all adopt the active theme.
+- [ ] Night maintains readable contrast for body copy, metadata, tags, forms, and controls.
+- [ ] Light themes maintain readable selected/hover states without losing hierarchy.
+- [ ] Escape closes the appearance panel.
+- [ ] Appearance panel fits within phone viewport.
+- [ ] Toast feedback remains visible above the appearance control.
+
 ## Navigation / feed
 
 - [ ] Channel navigation updates the feed and heading.
@@ -23,6 +36,7 @@ Use this after a local build and again against the deployed Render URL.
 - [ ] Search matches thread title/body/author/tags/channel.
 - [ ] `Ctrl/Cmd+K` focuses search.
 - [ ] Changing scope/filter cannot leave the detail pane displaying a thread outside the current visible feed.
+- [ ] Mobile navigation displays a backdrop and does not leave page-level horizontal overflow.
 
 ## Threads
 
