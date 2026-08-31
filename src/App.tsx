@@ -1,36 +1,48 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {
   Search,Plus,Hash,Inbox,Bookmark,Compass,Settings,Bell,ChevronDown,
-  MessageSquare,CheckCircle2,ThumbsUp,Reply,MoreHorizontal,PanelLeft,
-  PenLine,Clock3,Sparkles,X,Send,Link2
+  MessageSquare,CheckCircle2,ThumbsUp,Reply,PanelLeft,
+  PenLine,Clock3,Sparkles,X,Send,Link2,Trash2,RotateCcw,ShieldCheck
 } from 'lucide-react';
 import {firebaseReady,signInGoogle} from './firebase';
 
-type ReplyT={id:string;author:string;initials:string;time:string;body:string};
+type ReplyT={id:string;author:string;initials:string;time:string;body:string;helpful?:number};
 type Thread={
   id:string;channel:string;title:string;body:string;author:string;initials:string;
   time:string;tags:string[];replies:ReplyT[];likes:number;views:number;saved:boolean;solved?:boolean
 };
-type Scope='channel'|'saved'|'all';
+type Scope='channel'|'saved'|'all'|'inbox';
 type FeedMode='latest'|'popular'|'unanswered';
 
 const seed:Thread[]=[
-  {id:'1',channel:'engineering',title:'What should our API retry policy look like?',body:'We currently retry all 5xx responses with the same backoff. I think we should separate transient gateway failures from application errors and add jitter before this goes into the mobile release.',author:'Maya Chen',initials:'MC',time:'18m',tags:['api','reliability'],likes:14,views:86,saved:true,solved:true,replies:[{id:'r1',author:'Alex Rivera',initials:'AR',time:'12m',body:'I would cap client retries at 2 and move any longer retry strategy to the job layer. That keeps request latency predictable.'},{id:'r2',author:'Noah Ragan',initials:'NR',time:'6m',body:'Agreed. We can also honor Retry-After when upstream gives us one and document which error classes are safe to replay.'}]},
-  {id:'2',channel:'product',title:'Decision: simplify the free workspace limits',body:'Posting the outcome from today’s pricing review so we have one durable source of truth. Free workspaces will keep unlimited viewers and cap active editors at three.',author:'Jamie Lee',initials:'JL',time:'42m',tags:['decision','pricing'],likes:21,views:132,saved:false,solved:true,replies:[{id:'r3',author:'Noah Ragan',initials:'NR',time:'31m',body:'This makes the upgrade boundary a lot easier to explain in-product. I’ll update the empty state copy.'}]},
+  {id:'1',channel:'engineering',title:'What should our API retry policy look like?',body:'We currently retry all 5xx responses with the same backoff. I think we should separate transient gateway failures from application errors and add jitter before this goes into the mobile release.',author:'Maya Chen',initials:'MC',time:'18m',tags:['api','reliability'],likes:14,views:86,saved:true,solved:true,replies:[{id:'r1',author:'Alex Rivera',initials:'AR',time:'12m',body:'I would cap client retries at 2 and move any longer retry strategy to the job layer. That keeps request latency predictable.',helpful:3},{id:'r2',author:'Noah Ragan',initials:'NR',time:'6m',body:'Agreed. We can also honor Retry-After when upstream gives us one and document which error classes are safe to replay.',helpful:2}]},
+  {id:'2',channel:'product',title:'Decision: simplify the free workspace limits',body:'Posting the outcome from today’s pricing review so we have one durable source of truth. Free workspaces will keep unlimited viewers and cap active editors at three.',author:'Jamie Lee',initials:'JL',time:'42m',tags:['decision','pricing'],likes:21,views:132,saved:false,solved:true,replies:[{id:'r3',author:'Noah Ragan',initials:'NR',time:'31m',body:'This makes the upgrade boundary a lot easier to explain in-product. I’ll update the empty state copy.',helpful:4}]},
   {id:'3',channel:'design',title:'Small accessibility audit findings',body:'I ran a keyboard-only pass on the settings area. Most flows are solid, but modal focus restoration and two icon-only actions need attention before release.',author:'Avery Morgan',initials:'AM',time:'1h',tags:['a11y','design-system'],likes:9,views:54,saved:false,replies:[]},
-  {id:'4',channel:'engineering',title:'Patterns for optimistic updates with rollback',body:'Collecting examples of where we already use optimistic UI successfully and where we should avoid it. Comments and reactions feel safe; billing settings probably do not.',author:'Noah Ragan',initials:'NR',time:'2h',tags:['frontend','architecture'],likes:18,views:110,saved:true,replies:[{id:'r4',author:'Maya Chen',initials:'MC',time:'1h',body:'A small mutation state machine would make rollback behavior consistent without tying us to a specific data library.'}]},
+  {id:'4',channel:'engineering',title:'Patterns for optimistic updates with rollback',body:'Collecting examples of where we already use optimistic UI successfully and where we should avoid it. Comments and reactions feel safe; billing settings probably do not.',author:'Noah Ragan',initials:'NR',time:'2h',tags:['frontend','architecture'],likes:18,views:110,saved:true,replies:[{id:'r4',author:'Maya Chen',initials:'MC',time:'1h',body:'A small mutation state machine would make rollback behavior consistent without tying us to a specific data library.',helpful:6}]},
   {id:'5',channel:'research',title:'Customer interview notes: onboarding week 34',body:'Three recurring themes this week: people understand projects quickly, invite teammates later than expected, and want examples before creating their first workflow.',author:'Sam Kim',initials:'SK',time:'3h',tags:['research','onboarding'],likes:11,views:70,saved:false,replies:[]}
 ];
 
 const channels=['engineering','product','design','research','random'] as const;
 const STORE='threadline-v1';
 
+function cloneSeed(){return structuredClone(seed)}
+function isReply(value:unknown):value is ReplyT{
+  if(!value||typeof value!=='object')return false;
+  const item=value as Partial<ReplyT>;
+  return typeof item.id==='string'&&typeof item.author==='string'&&typeof item.body==='string';
+}
+function isThread(value:unknown):value is Thread{
+  if(!value||typeof value!=='object')return false;
+  const item=value as Partial<Thread>;
+  return typeof item.id==='string'&&typeof item.channel==='string'&&typeof item.title==='string'&&typeof item.body==='string'&&Array.isArray(item.tags)&&Array.isArray(item.replies)&&item.replies.every(isReply)&&typeof item.likes==='number'&&typeof item.views==='number'&&typeof item.saved==='boolean';
+}
 function readThreads():Thread[]{
   try{
     const parsed=JSON.parse(localStorage.getItem(STORE)||'null');
-    return Array.isArray(parsed)?parsed:seed;
-  }catch{return seed}
+    return Array.isArray(parsed)&&parsed.every(isThread)?parsed:cloneSeed();
+  }catch{return cloneSeed()}
 }
+function persistThreads(threads:Thread[]){try{localStorage.setItem(STORE,JSON.stringify(threads))}catch{/* Browser storage can be unavailable; keep the in-memory workspace usable. */}}
 
 export default function App(){
   const [threads,setThreads]=useState<Thread[]>(readThreads);
@@ -40,12 +52,13 @@ export default function App(){
   const [feedMode,setFeedMode]=useState<FeedMode>('latest');
   const [query,setQuery]=useState('');
   const [composer,setComposer]=useState(false);
+  const [settingsOpen,setSettingsOpen]=useState(false);
   const [mobileNav,setMobileNav]=useState(false);
   const [detailOpen,setDetailOpen]=useState(false);
   const [toast,setToast]=useState('');
   const searchRef=useRef<HTMLInputElement>(null);
 
-  useEffect(()=>localStorage.setItem(STORE,JSON.stringify(threads)),[threads]);
+  useEffect(()=>persistThreads(threads),[threads]);
   useEffect(()=>{
     if(!toast)return;
     const timer=setTimeout(()=>setToast(''),2200);
@@ -56,11 +69,16 @@ export default function App(){
       if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){
         event.preventDefault();searchRef.current?.focus();
       }
-      if(event.key==='Escape'&&detailOpen)closeDetail();
+      if(event.key==='Escape'){
+        if(settingsOpen)setSettingsOpen(false);
+        else if(composer)setComposer(false);
+        else if(detailOpen)closeDetail();
+        else if(mobileNav)setMobileNav(false);
+      }
     };
     window.addEventListener('keydown',onKey);
     return()=>window.removeEventListener('keydown',onKey);
-  },[detailOpen]);
+  },[composer,detailOpen,mobileNav,settingsOpen]);
   useEffect(()=>{
     const id=window.location.hash.startsWith('#thread-')?window.location.hash.slice(8):'';
     if(id&&threads.some(thread=>thread.id===id)){
@@ -71,8 +89,8 @@ export default function App(){
   const visible=useMemo(()=>{
     const q=query.trim().toLowerCase();
     let next=threads.filter(thread=>{
-      const inScope=scope==='saved'?thread.saved:scope==='all'?true:thread.channel===channel;
-      const matches=!q||`${thread.title} ${thread.body} ${thread.tags.join(' ')} ${thread.author}`.toLowerCase().includes(q);
+      const inScope=scope==='saved'?thread.saved:scope==='all'?true:scope==='inbox'?!thread.solved:thread.channel===channel;
+      const matches=!q||`${thread.title} ${thread.body} ${thread.tags.join(' ')} ${thread.author} ${thread.channel}`.toLowerCase().includes(q);
       const feedMatch=feedMode!=='unanswered'||thread.replies.length===0;
       return inScope&&matches&&feedMatch;
     });
@@ -80,21 +98,40 @@ export default function App(){
     return next;
   },[threads,scope,channel,query,feedMode]);
 
-  const active=visible.find(thread=>thread.id===selected)??threads.find(thread=>thread.id===selected)??visible[0];
-  const heading=scope==='saved'?'saved':scope==='all'?'all':channel;
+  useEffect(()=>{
+    if(visible.length&& !visible.some(thread=>thread.id===selected))setSelected(visible[0].id);
+    if(!visible.length)setDetailOpen(false);
+  },[visible,selected]);
+
+  const active=visible.find(thread=>thread.id===selected)??visible[0];
+  const heading=scope==='saved'?'saved':scope==='all'?'all':scope==='inbox'?'inbox':channel;
   const description=scope==='saved'
     ?'The discussions and decisions you wanted to keep close.'
     :scope==='all'
       ?'Everything your team has documented across the workspace.'
-      :channel==='engineering'
-        ?'Architecture, implementation, incidents, and useful technical context.'
-        :'Shared context your team can find again later.';
+      :scope==='inbox'
+        ?'Open questions and unresolved context that still need a decision.'
+        :channel==='engineering'
+          ?'Architecture, implementation, incidents, and useful technical context.'
+          :'Shared context your team can find again later.';
 
   const toggleSave=(id:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,saved:!thread.saved}:thread));
   const like=(id:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,likes:thread.likes+1}:thread));
-  const reply=(id:string,body:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,replies:[...thread.replies,{id:crypto.randomUUID(),author:'Noah Ragan',initials:'NR',time:'now',body}]}:thread));
+  const reply=(id:string,body:string)=>setThreads(current=>current.map(thread=>thread.id===id?{...thread,replies:[...thread.replies,{id:crypto.randomUUID(),author:'Noah Ragan',initials:'NR',time:'now',body,helpful:0}]}:thread));
+  const helpful=(threadId:string,replyId:string)=>setThreads(current=>current.map(thread=>thread.id===threadId?{...thread,replies:thread.replies.map(item=>item.id===replyId?{...item,helpful:(item.helpful??0)+1}:item)}:thread));
+  const toggleSolved=(id:string)=>{
+    let nextState=false;
+    setThreads(current=>current.map(thread=>{if(thread.id!==id)return thread;nextState=!thread.solved;return {...thread,solved:nextState}}));
+    setToast(nextState?'Thread marked resolved':'Thread reopened');
+  };
+  const deleteThread=(id:string)=>{
+    const thread=threads.find(item=>item.id===id);
+    if(!thread||!window.confirm(`Delete “${thread.title}”?`))return;
+    setThreads(current=>current.filter(item=>item.id!==id));closeDetail();setToast('Thread deleted');
+  };
   const openThread=(id:string)=>{
     setSelected(id);setDetailOpen(true);
+    setThreads(current=>current.map(thread=>thread.id===id?{...thread,views:thread.views+1}:thread));
     window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}#thread-${id}`);
   };
   const closeDetail=()=>{
@@ -106,6 +143,10 @@ export default function App(){
   };
   const changeScope=(next:Scope)=>{
     setScope(next);setFeedMode('latest');setMobileNav(false);closeDetail();
+  };
+  const resetWorkspace=()=>{
+    if(!window.confirm('Reset Threadline to the original sample workspace?'))return;
+    setThreads(cloneSeed());setSelected('1');setChannel('engineering');setScope('channel');setFeedMode('latest');setQuery('');setSettingsOpen(false);closeDetail();setToast('Workspace reset');
   };
   const signIn=async()=>{
     if(!firebaseReady){setToast('Demo mode — add Firebase keys to enable Google sign-in');return}
@@ -122,9 +163,9 @@ export default function App(){
         <ChevronDown size={15}/>
       </button>
       <nav>
-        <button onClick={()=>setToast('No inbox workflow is connected in demo mode')}><Inbox/><span>Inbox</span></button>
-        <button onClick={()=>changeScope('saved')}><Bookmark/><span>Saved</span></button>
-        <button onClick={()=>changeScope('all')}><Compass/><span>Explore</span></button>
+        <button className={scope==='inbox'?'active':''} onClick={()=>changeScope('inbox')}><Inbox/><span>Inbox</span><b>{threads.filter(thread=>!thread.solved).length}</b></button>
+        <button className={scope==='saved'?'active':''} onClick={()=>changeScope('saved')}><Bookmark/><span>Saved</span><b>{threads.filter(thread=>thread.saved).length}</b></button>
+        <button className={scope==='all'?'active':''} onClick={()=>changeScope('all')}><Compass/><span>Explore</span></button>
       </nav>
       <div className="nav-head">Channels <Plus size={14}/></div>
       <div className="channels">
@@ -138,7 +179,7 @@ export default function App(){
         <div className="nav-head">Online now <span>4</span></div>
         {[['MC','Maya'],['AM','Avery'],['JL','Jamie']].map(([initials,name])=><div key={initials}><span className="avatar">{initials}<i/></span>{name}</div>)}
       </div>
-      <button className="settings" onClick={()=>setToast('Workspace settings are available after backend setup')}><Settings/>Workspace settings</button>
+      <button className="settings" onClick={()=>{setSettingsOpen(true);setMobileNav(false)}}><Settings/>Workspace settings</button>
     </aside>
 
     <main className="feed">
@@ -177,31 +218,33 @@ export default function App(){
 
     <aside className={detailOpen?'detail detail-open':'detail'} aria-label="Thread details">
       <button className="detail-close" onClick={closeDetail} aria-label="Close thread details"><X/></button>
-      {active?<ThreadDetail thread={active} onLike={()=>like(active.id)} onSave={()=>toggleSave(active.id)} onReply={body=>{reply(active.id,body);setToast('Reply posted')}} onToast={setToast}/>:<div className="empty">No thread selected.</div>}
+      {active?<ThreadDetail thread={active} onLike={()=>like(active.id)} onSave={()=>toggleSave(active.id)} onReply={body=>{reply(active.id,body);setToast('Reply posted')}} onHelpful={replyId=>helpful(active.id,replyId)} onToggleSolved={()=>toggleSolved(active.id)} onDelete={()=>deleteThread(active.id)} onToast={setToast}/>:<div className="empty">No thread selected.</div>}
     </aside>
 
     {composer&&<Composer channel={scope==='channel'?channel:'engineering'} onClose={()=>setComposer(false)} onCreate={thread=>{setThreads(current=>[thread,...current]);setSelected(thread.id);setChannel(thread.channel);setScope('channel');setFeedMode('latest');setComposer(false);setDetailOpen(true);window.history.replaceState(null,'',`${window.location.pathname}${window.location.search}#thread-${thread.id}`);setToast('Thread published')}}/>}
+    {settingsOpen&&<SettingsPanel onClose={()=>setSettingsOpen(false)} onReset={resetWorkspace}/>} 
     {toast&&<div className="toast"><CheckCircle2/>{toast}</div>}
   </div>
 }
 
-function ThreadDetail({thread,onLike,onSave,onReply,onToast}:{thread:Thread;onLike:()=>void;onSave:()=>void;onReply:(body:string)=>void;onToast:(message:string)=>void}){
+function ThreadDetail({thread,onLike,onSave,onReply,onHelpful,onToggleSolved,onDelete,onToast}:{thread:Thread;onLike:()=>void;onSave:()=>void;onReply:(body:string)=>void;onHelpful:(replyId:string)=>void;onToggleSolved:()=>void;onDelete:()=>void;onToast:(message:string)=>void}){
   const [body,setBody]=useState('');
+  const replyRef=useRef<HTMLTextAreaElement>(null);
   const copyLink=async()=>{
     const url=`${window.location.origin}${window.location.pathname}${window.location.search}#thread-${thread.id}`;
     try{await navigator.clipboard.writeText(url);onToast('Thread link copied')}
     catch{onToast('Copy failed — your browser blocked clipboard access')}
   };
   return <div className="detail-inner">
-    <div className="detail-top"><span>Thread</span><div><button onClick={onSave} className={thread.saved?'active':''} aria-label="Save thread"><Bookmark/></button><button aria-label="More thread options"><MoreHorizontal/></button></div></div>
+    <div className="detail-top"><span>Thread</span><div><button onClick={onSave} className={thread.saved?'active':''} aria-label="Save thread"><Bookmark/></button><button className={thread.solved?'resolved-toggle active':'resolved-toggle'} onClick={onToggleSolved} aria-label={thread.solved?'Reopen thread':'Mark thread resolved'}><CheckCircle2/></button><button className="danger-icon" onClick={onDelete} aria-label="Delete thread"><Trash2/></button></div></div>
     <div className="author"><span className="avatar big">{thread.initials}</span><div><b>{thread.author}</b><small>#{thread.channel} · {thread.time} ago</small></div></div>
     <h2>{thread.title}</h2><p className="body">{thread.body}</p>
-    <div className="detail-actions"><button onClick={onLike}><ThumbsUp/>{thread.likes}</button><button onClick={()=>onToast('Reply box is ready below')}><Reply/>Reply</button><button onClick={copyLink}><Link2/>Copy link</button></div>
+    <div className="detail-actions"><button onClick={onLike}><ThumbsUp/>{thread.likes}</button><button onClick={()=>replyRef.current?.focus()}><Reply/>Reply</button><button onClick={copyLink}><Link2/>Copy link</button></div>
     {thread.solved&&<div className="resolved"><CheckCircle2/><div><b>Marked as resolved</b><span>This thread contains a confirmed answer or decision.</span></div></div>}
     <div className="reply-head"><b>{thread.replies.length} {thread.replies.length===1?'reply':'replies'}</b><span>Newest first</span></div>
-    <div className="replies">{thread.replies.slice().reverse().map(item=><article key={item.id}><span className="avatar">{item.initials}</span><div><b>{item.author}<small>{item.time} ago</small></b><p>{item.body}</p><button type="button"><ThumbsUp/>Helpful</button></div></article>)}</div>
+    <div className="replies">{thread.replies.slice().reverse().map(item=><article key={item.id}><span className="avatar">{item.initials}</span><div><b>{item.author}<small>{item.time} ago</small></b><p>{item.body}</p><button type="button" onClick={()=>onHelpful(item.id)}><ThumbsUp/>Helpful{item.helpful?` · ${item.helpful}`:''}</button></div></article>)}</div>
     <form className="reply-box" onSubmit={event=>{event.preventDefault();if(body.trim()){onReply(body.trim());setBody('')}}}>
-      <span className="avatar nr">NR</span><div><textarea value={body} onChange={event=>setBody(event.target.value)} placeholder="Add useful context…" aria-label="Reply text"/><div><span>Markdown supported</span><button><Send/>Reply</button></div></div>
+      <span className="avatar nr">NR</span><div><textarea ref={replyRef} value={body} onChange={event=>setBody(event.target.value)} placeholder="Add useful context…" aria-label="Reply text"/><div><span>Plain text reply</span><button><Send/>Reply</button></div></div>
     </form>
   </div>
 }
@@ -222,4 +265,14 @@ function Composer({channel,onClose,onCreate}:{channel:string;onClose:()=>void;on
       <button className="publish"><Send/>Publish thread</button>
     </form>
   </div>
+}
+
+function SettingsPanel({onClose,onReset}:{onClose:()=>void;onReset:()=>void}){
+  return <div className="overlay" onMouseDown={onClose}><section className="settings-panel" onMouseDown={event=>event.stopPropagation()}>
+    <button type="button" className="close" onClick={onClose} aria-label="Close settings"><X/></button>
+    <span className="compose-icon"><Settings/></span><h2>Workspace settings</h2><p>Threadline is fully usable in local-first mode. Connect Firebase last when you’re ready to give each user a private identity and hosted workspace.</p>
+    <div className="settings-row"><span><ShieldCheck/><b>Authentication</b></span><strong>{firebaseReady?'Firebase configured':'Demo identity'}</strong></div>
+    <div className="settings-row"><span><Bookmark/><b>Persistence</b></span><strong>Browser workspace</strong></div>
+    <button className="reset-workspace" onClick={onReset}><RotateCcw/>Reset sample workspace</button>
+  </section></div>
 }
