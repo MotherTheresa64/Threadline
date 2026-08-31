@@ -11,6 +11,7 @@ import './final-polish.css';
 import './themes.css';
 import './theme-aliases.css';
 import './release-polish.css';
+import './theme-layout.css';
 
 initializeThemes();
 
