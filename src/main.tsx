@@ -6,6 +6,7 @@ import './styles.css';
 import './interaction.css';
 import './mobile-detail.css';
 import './accessibility.css';
+import './final-polish.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><ErrorBoundary><App/></ErrorBoundary></React.StrictMode>
