@@ -51,6 +51,16 @@ service cloud.firestore {
       return isMember(workspaceId) && role(workspaceId) == 'owner';
     }
 
+    function bootstrappingOwner(workspaceId) {
+      return signedIn()
+        && getAfter(workspacePath(workspaceId)).data.ownerId == uid()
+        && getAfter(workspacePath(workspaceId)).data.ownerEmail == email()
+        && getAfter(membershipPath(workspaceId, uid())).data.workspaceId == workspaceId
+        && getAfter(membershipPath(workspaceId, uid())).data.userId == uid()
+        && getAfter(membershipPath(workspaceId, uid())).data.role == 'owner'
+        && getAfter(membershipPath(workspaceId, uid())).data.status == 'active';
+    }
+
     function channelExists(workspaceId, channelId) {
       return exists(channelPath(workspaceId, channelId));
     }
@@ -95,10 +105,7 @@ service cloud.firestore {
         && request.resource.data.ownerId == uid()
         && request.resource.data.ownerEmail == email()
         && request.resource.data.schemaVersion == 2
-        && getAfter(membershipPath(workspaceId, uid())).data.workspaceId == workspaceId
-        && getAfter(membershipPath(workspaceId, uid())).data.userId == uid()
-        && getAfter(membershipPath(workspaceId, uid())).data.role == 'owner'
-        && getAfter(membershipPath(workspaceId, uid())).data.status == 'active';
+        && bootstrappingOwner(workspaceId);
 
       allow read: if isMember(workspaceId);
 
@@ -118,7 +125,7 @@ service cloud.firestore {
             || uid() in resource.data.memberIds
           );
 
-        allow create: if canManage(workspaceId)
+        allow create: if (canManage(workspaceId) || bootstrappingOwner(workspaceId))
           && request.resource.data.keys().hasOnly([
             'name', 'description', 'private', 'memberIds', 'createdById', 'createdAt', 'updatedAt'
           ])
@@ -397,7 +404,7 @@ service cloud.firestore {
 
     match /activity/{activityId} {
       allow read: if isMember(resource.data.workspaceId);
-      allow create: if canWrite(request.resource.data.workspaceId)
+      allow create: if (canWrite(request.resource.data.workspaceId) || bootstrappingOwner(request.resource.data.workspaceId))
         && request.resource.data.actorId == uid()
         && validText(request.resource.data.actorName, 1, 80)
         && validText(request.resource.data.summary, 1, 500);
