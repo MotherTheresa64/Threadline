@@ -13,6 +13,7 @@ import './theme-aliases.css';
 import './release-polish.css';
 import './theme-layout.css';
 import './product.css';
+import './showcase-design.css';
 
 initializeThemes();
 

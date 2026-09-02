@@ -1,12 +1,12 @@
 type ThemeId='paper'|'moss'|'lavender'|'night';
 type ThemeOption={id:ThemeId;label:string;description:string;colors:[string,string];browserColor:string};
-const STORAGE_KEY='threadline-theme-v1';
-const DEFAULT_THEME:ThemeId='paper';
+const STORAGE_KEY='threadline-theme-v2';
+const DEFAULT_THEME:ThemeId='night';
 const themes:ThemeOption[]=[
   {id:'paper',label:'Paper',description:'Warm editorial cream and ink',colors:['#f6f3eb','#2d6a4f'],browserColor:'#f5f2ea'},
   {id:'moss',label:'Moss',description:'Soft sage with forest contrast',colors:['#edf1e8','#315f4b'],browserColor:'#edf1e8'},
   {id:'lavender',label:'Lavender',description:'Cool lilac with plum details',colors:['#f3f0fa','#765f9b'],browserColor:'#f3f0fa'},
-  {id:'night',label:'Night',description:'Deep charcoal with sage light',colors:['#171a18','#87c3a7'],browserColor:'#151816'}
+  {id:'night',label:'Night',description:'Deep ink with Threadline violet',colors:['#070811','#9a55ff'],browserColor:'#06070d'}
 ];
 function isTheme(value:string|null):value is ThemeId{return themes.some(theme=>theme.id===value)}
 function readTheme():ThemeId{try{const saved=localStorage.getItem(STORAGE_KEY);return isTheme(saved)?saved:DEFAULT_THEME}catch{return DEFAULT_THEME}}

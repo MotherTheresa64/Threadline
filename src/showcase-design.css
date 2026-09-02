@@ -1,0 +1,19 @@
+/* Portfolio visual direction: dark knowledge collaboration with a distinctive violet thread. */
+html[data-theme="night"]{
+  --theme-bg:#06070d;--theme-rail:#080912;--theme-surface:#0d101a;--theme-surface-2:#121625;
+  --theme-surface-3:#1b2133;--theme-line:#252d42;--theme-text:#f7f5fb;--theme-muted:#9a9fb1;
+  --theme-accent:#a45cff;--theme-accent-soft:#26133f;--theme-warm:#d273ff;--theme-shadow:#000a;
+}
+body{background:radial-gradient(circle at 95% 0,#5b1f8f22,transparent 28%),#06070d!important}
+.app-shell{grid-template-columns:244px minmax(460px,1fr) minmax(340px,430px);background:transparent!important}
+.rail{padding:22px 14px;background:linear-gradient(180deg,#080912,#06070d)!important;border-right:1px solid #20273a}.logo{letter-spacing:.12em}.logo-mark{border-radius:11px;background:linear-gradient(145deg,#6321a0,#a14ff1)!important;box-shadow:0 0 28px #9852ed35}
+.workspace{border-radius:11px!important;background:linear-gradient(90deg,#291541,#1b112c)!important;border-color:#57317a!important}.rail nav button,.channels button,.settings{min-height:40px;border-radius:9px}.rail nav button.active,.channels button.active{background:linear-gradient(90deg,#392056,#241537)!important}
+.feed{background:radial-gradient(circle at 100% -10%,#55277b18,transparent 28%),#080a11!important}.feed header{height:70px;background:#080a11de!important}.feed-head{padding-top:30px}.feed-head h1,.page-head h1,.document-card h2,.detail h2{font-family:Inter,system-ui,sans-serif!important;letter-spacing:-.025em}
+.overview-grid{gap:12px}.metric,.document-card,.thread,.board-column,.board-card,.timeline-item div,.notification,.settings-panel,.composer{border-radius:13px;border-color:#232b3f!important;background:linear-gradient(145deg,#0f131e,#0c0f18)!important;box-shadow:0 16px 38px #0003}
+.metric>svg,.document-icon{color:#ae68ff!important}.document-icon{background:#25143b!important}.thread{margin:0 10px 8px;padding:17px;border:1px solid #20283a!important}.thread.selected{border-color:#58347b!important;background:linear-gradient(145deg,#171124,#0f0d18)!important}.thread:hover{transform:translateY(-1px);border-color:#403051!important}
+.new,.publish,.reply-box button{background:linear-gradient(135deg,#ad62ff,#7d38ce)!important;color:#fff!important;border-radius:10px;box-shadow:0 8px 24px #8b3ee52a}.filters button.active{background:#25163a!important;color:#e5caff!important}
+.detail{background:#090b12!important;border-left:1px solid #222a3d}.detail-actions button{border-radius:9px!important}.status-pill.resolved,.resolved{background:#1e382c!important;color:#79dba7!important;border-color:#2c6147!important}
+.theme-toggle{border-radius:12px}
+@media(max-width:1250px){.app-shell{grid-template-columns:220px minmax(460px,1fr) 370px}}
+@media(max-width:1000px){.app-shell{grid-template-columns:210px 1fr}}
+@media(max-width:720px){.app-shell{display:block}.feed header{height:64px}.thread{margin-inline:6px}.feed-head{padding-top:24px}.theme-control{bottom:12px}}
