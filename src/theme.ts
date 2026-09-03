@@ -3,10 +3,10 @@ type ThemeOption={id:ThemeId;label:string;description:string;colors:[string,stri
 const STORAGE_KEY='threadline-theme-v2';
 const DEFAULT_THEME:ThemeId='night';
 const themes:ThemeOption[]=[
-  {id:'paper',label:'Paper',description:'Warm editorial cream and ink',colors:['#f6f3eb','#2d6a4f'],browserColor:'#f5f2ea'},
-  {id:'moss',label:'Moss',description:'Soft sage with forest contrast',colors:['#edf1e8','#315f4b'],browserColor:'#edf1e8'},
-  {id:'lavender',label:'Lavender',description:'Cool lilac with plum details',colors:['#f3f0fa','#765f9b'],browserColor:'#f3f0fa'},
-  {id:'night',label:'Night',description:'Deep ink with Threadline violet',colors:['#070811','#9a55ff'],browserColor:'#06070d'}
+  {id:'paper',label:'Carbon',description:'Soft black with restrained silver',colors:['#08090d','#9aa4b2'],browserColor:'#08090d'},
+  {id:'moss',label:'Signal',description:'Deep charcoal with muted green',colors:['#070d0b','#62b890'],browserColor:'#070d0b'},
+  {id:'lavender',label:'Ultraviolet',description:'Black plum with electric lavender',colors:['#090713','#a85cff'],browserColor:'#090713'},
+  {id:'night',label:'Threadline',description:'Near-black with signature violet',colors:['#05060c','#9d4dff'],browserColor:'#05060c'}
 ];
 function isTheme(value:string|null):value is ThemeId{return themes.some(theme=>theme.id===value)}
 function readTheme():ThemeId{try{const saved=localStorage.getItem(STORAGE_KEY);return isTheme(saved)?saved:DEFAULT_THEME}catch{return DEFAULT_THEME}}
@@ -15,7 +15,7 @@ function setBrowserColor(color:string){let meta=document.querySelector<HTMLMetaE
 function applyTheme(theme:ThemeId){
   const option=themes.find(item=>item.id===theme)??themes[0];
   document.documentElement.dataset.theme=option.id;
-  document.documentElement.style.colorScheme=option.id==='night'?'dark':'light';
+  document.documentElement.style.colorScheme='dark';
   setBrowserColor(option.browserColor);persistTheme(option.id);
   document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]').forEach(button=>{const active=button.dataset.themeChoice===option.id;button.setAttribute('aria-pressed',String(active));button.classList.toggle('active',active)});
   const label=document.querySelector<HTMLElement>('[data-current-theme]');if(label)label.textContent=option.label;
