@@ -2,45 +2,428 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
-      return request.auth != null && request.auth.token.email != null && request.auth.token.email_verified == true;
+      return request.auth != null && request.auth.uid != null && request.auth.token.email != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
     }
 
     function email() {
-      return request.auth.token.email;
+      return request.auth.token.email.lower();
     }
 
-    function isMember(data) {
-      return signedIn() && email() in data.memberEmails;
+    function membershipPath(workspaceId, userId) {
+      return /databases/$(database)/documents/memberships/$(workspaceId + '_' + userId);
     }
 
-    function isAdmin(data) {
-      return signedIn() && email() in data.adminEmails;
+    function workspacePath(workspaceId) {
+      return /databases/$(database)/documents/workspaces/$(workspaceId);
     }
 
-    function isGuest(data) {
-      return signedIn() && email() in data.guestEmails;
+    function channelPath(workspaceId, channelId) {
+      return /databases/$(database)/documents/workspaces/$(workspaceId)/channels/$(channelId);
+    }
+
+    function isMember(workspaceId) {
+      return signedIn()
+        && exists(membershipPath(workspaceId, uid()))
+        && get(membershipPath(workspaceId, uid())).data.status == 'active';
+    }
+
+    function membership(workspaceId) {
+      return get(membershipPath(workspaceId, uid())).data;
+    }
+
+    function role(workspaceId) {
+      return membership(workspaceId).role;
+    }
+
+    function canWrite(workspaceId) {
+      return isMember(workspaceId) && role(workspaceId) in ['owner', 'admin', 'member'];
+    }
+
+    function canManage(workspaceId) {
+      return isMember(workspaceId) && role(workspaceId) in ['owner', 'admin'];
+    }
+
+    function isOwner(workspaceId) {
+      return isMember(workspaceId) && role(workspaceId) == 'owner';
+    }
+
+    function bootstrappingOwner(workspaceId) {
+      return signedIn()
+        && getAfter(workspacePath(workspaceId)).data.ownerId == uid()
+        && getAfter(workspacePath(workspaceId)).data.ownerEmail == email()
+        && getAfter(membershipPath(workspaceId, uid())).data.workspaceId == workspaceId
+        && getAfter(membershipPath(workspaceId, uid())).data.userId == uid()
+        && getAfter(membershipPath(workspaceId, uid())).data.role == 'owner'
+        && getAfter(membershipPath(workspaceId, uid())).data.status == 'active';
+    }
+
+    function channelExists(workspaceId, channelId) {
+      return exists(channelPath(workspaceId, channelId));
+    }
+
+    function canAccessChannel(workspaceId, channelId) {
+      return isMember(workspaceId)
+        && channelExists(workspaceId, channelId)
+        && (
+          get(channelPath(workspaceId, channelId)).data.private == false
+          || canManage(workspaceId)
+          || uid() in get(channelPath(workspaceId, channelId)).data.memberIds
+        );
+    }
+
+    function validText(value, min, max) {
+      return value is string && value.size() >= min && value.size() <= max;
+    }
+
+    function validOptionalText(value, max) {
+      return value is string && value.size() <= max;
+    }
+
+    function validRole(value) {
+      return value in ['owner', 'admin', 'member', 'guest'];
+    }
+
+    function validInviteRole(value) {
+      return value in ['admin', 'member', 'guest'];
+    }
+
+    function immutableKeysUnchanged(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasNone(keys);
     }
 
     match /workspaces/{workspaceId} {
       allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'name', 'description', 'ownerId', 'ownerEmail', 'createdAt', 'updatedAt', 'schemaVersion'
+        ])
+        && validText(request.resource.data.name, 2, 80)
+        && validOptionalText(request.resource.data.description, 500)
+        && request.resource.data.ownerId == uid()
         && request.resource.data.ownerEmail == email()
-        && request.resource.data.memberEmails == [email()]
-        && request.resource.data.adminEmails == [email()]
-        && request.resource.data.guestEmails == [];
+        && request.resource.data.schemaVersion == 2
+        && bootstrappingOwner(workspaceId);
 
-      allow read: if isMember(resource.data);
+      allow read: if isMember(workspaceId);
 
-      // Owners/admins can manage membership, channels, settings, and content.
-      allow update: if isAdmin(resource.data)
-        // Regular members can collaborate on shared content but cannot change
-        // membership, roles, channels, or workspace identity.
-        || (isMember(resource.data)
-          && !isGuest(resource.data)
+      allow update: if canManage(workspaceId)
+        && immutableKeysUnchanged(['ownerId', 'ownerEmail', 'createdAt', 'schemaVersion'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'updatedAt'])
+        && validText(request.resource.data.name, 2, 80)
+        && validOptionalText(request.resource.data.description, 500);
+
+      allow delete: if false;
+
+      match /channels/{channelId} {
+        allow read: if isMember(workspaceId)
+          && (
+            resource.data.private == false
+            || canManage(workspaceId)
+            || uid() in resource.data.memberIds
+          );
+
+        allow create: if (canManage(workspaceId) || bootstrappingOwner(workspaceId))
+          && request.resource.data.keys().hasOnly([
+            'name', 'description', 'private', 'memberIds', 'createdById', 'createdAt', 'updatedAt'
+          ])
+          && validText(request.resource.data.name, 2, 60)
+          && validOptionalText(request.resource.data.description, 300)
+          && request.resource.data.private is bool
+          && request.resource.data.memberIds is list
+          && request.resource.data.memberIds.size() <= 100
+          && request.resource.data.createdById == uid();
+
+        allow update: if canManage(workspaceId)
+          && immutableKeysUnchanged(['name', 'createdById', 'createdAt'])
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'threads', 'documents', 'activity', 'notifications', 'updatedAt'
-          ]));
+            'description', 'private', 'memberIds', 'updatedAt', 'lastEditedById'
+          ])
+          && validOptionalText(request.resource.data.description, 300)
+          && request.resource.data.private is bool
+          && request.resource.data.memberIds is list
+          && request.resource.data.memberIds.size() <= 100
+          && request.resource.data.lastEditedById == uid();
 
-      allow delete: if signedIn() && resource.data.ownerEmail == email();
+        allow delete: if canManage(workspaceId) && channelId != 'general';
+      }
+    }
+
+    match /memberships/{membershipId} {
+      allow read: if signedIn()
+        && (
+          resource.data.userId == uid()
+          || isMember(resource.data.workspaceId)
+        );
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'workspaceId', 'userId', 'email', 'name', 'initials', 'avatar', 'role', 'status', 'inviteId', 'joinedAt'
+        ])
+        && membershipId == request.resource.data.workspaceId + '_' + request.resource.data.userId
+        && request.resource.data.userId == uid()
+        && request.resource.data.email == email()
+        && validText(request.resource.data.name, 1, 80)
+        && validText(request.resource.data.initials, 1, 4)
+        && validRole(request.resource.data.role)
+        && request.resource.data.status == 'active'
+        && (
+          (
+            request.resource.data.role == 'owner'
+            && getAfter(workspacePath(request.resource.data.workspaceId)).data.ownerId == uid()
+            && getAfter(workspacePath(request.resource.data.workspaceId)).data.ownerEmail == email()
+          )
+          || (
+            request.resource.data.inviteId is string
+            && get(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId)).data.workspaceId == request.resource.data.workspaceId
+            && get(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId)).data.email == email()
+            && get(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId)).data.status == 'pending'
+            && get(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId)).data.role == request.resource.data.role
+            && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId)).data.status == 'accepted'
+            && getAfter(/databases/$(database)/documents/invitations/$(request.resource.data.inviteId)).data.acceptedById == uid()
+          )
+        );
+
+      allow update: if signedIn()
+        && request.resource.data.workspaceId == resource.data.workspaceId
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.email == resource.data.email
+        && (
+          (
+            resource.data.userId == uid()
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.status == resource.data.status
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'initials', 'avatar', 'title'])
+          )
+          || (
+            canManage(resource.data.workspaceId)
+            && resource.data.role != 'owner'
+            && request.resource.data.role != 'owner'
+            && validRole(request.resource.data.role)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'status', 'name', 'initials', 'avatar', 'title'])
+          )
+        );
+
+      allow delete: if signedIn()
+        && resource.data.role != 'owner'
+        && (
+          resource.data.userId == uid()
+          || canManage(resource.data.workspaceId)
+        );
+    }
+
+    match /invitations/{invitationId} {
+      allow read: if signedIn()
+        && (
+          resource.data.email == email()
+          || canManage(resource.data.workspaceId)
+        );
+
+      allow create: if signedIn()
+        && canManage(request.resource.data.workspaceId)
+        && request.resource.data.keys().hasOnly([
+          'workspaceId', 'workspaceName', 'email', 'role', 'status', 'createdAt', 'expiresAt', 'createdById', 'createdByName'
+        ])
+        && validText(request.resource.data.workspaceName, 2, 80)
+        && validText(request.resource.data.email, 3, 254)
+        && validInviteRole(request.resource.data.role)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdById == uid();
+
+      allow update: if signedIn()
+        && request.resource.data.workspaceId == resource.data.workspaceId
+        && request.resource.data.workspaceName == resource.data.workspaceName
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.expiresAt == resource.data.expiresAt
+        && request.resource.data.createdById == resource.data.createdById
+        && request.resource.data.createdByName == resource.data.createdByName
+        && resource.data.status == 'pending'
+        && (
+          (
+            resource.data.email == email()
+            && request.resource.data.status in ['accepted', 'declined']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedById', 'respondedAt'])
+            && (
+              request.resource.data.status == 'declined'
+              || request.resource.data.acceptedById == uid()
+            )
+          )
+          || (
+            canManage(resource.data.workspaceId)
+            && request.resource.data.status == 'revoked'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    match /discussions/{discussionId} {
+      allow read: if canAccessChannel(resource.data.workspaceId, resource.data.channelId);
+
+      allow create: if canWrite(request.resource.data.workspaceId)
+        && canAccessChannel(request.resource.data.workspaceId, request.resource.data.channelId)
+        && request.resource.data.keys().hasOnly([
+          'workspaceId', 'channelId', 'title', 'body', 'authorId', 'authorName', 'authorEmail', 'initials',
+          'createdAt', 'updatedAt', 'tags', 'status', 'boardStatus', 'relatedDocumentIds', 'views'
+        ])
+        && validText(request.resource.data.title, 3, 160)
+        && validText(request.resource.data.body, 1, 12000)
+        && request.resource.data.tags is list
+        && request.resource.data.tags.size() <= 8
+        && request.resource.data.authorId == uid()
+        && request.resource.data.authorEmail == email()
+        && request.resource.data.status == 'open'
+        && request.resource.data.boardStatus == 'backlog'
+        && request.resource.data.views == 1;
+
+      allow update: if canWrite(resource.data.workspaceId)
+        && canAccessChannel(resource.data.workspaceId, resource.data.channelId)
+        && immutableKeysUnchanged(['workspaceId', 'channelId', 'authorId', 'authorName', 'authorEmail', 'initials', 'createdAt'])
+        && (
+          (
+            (resource.data.authorId == uid() || canManage(resource.data.workspaceId))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'title', 'body', 'tags', 'updatedAt', 'lastEditedById', 'status', 'boardStatus', 'resolution',
+              'resolvedBy', 'resolvedById', 'resolvedAt', 'acceptedReplyId', 'relatedDocumentIds', 'views'
+            ])
+          )
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'boardStatus', 'resolution', 'resolvedBy', 'resolvedById', 'resolvedAt',
+            'acceptedReplyId', 'relatedDocumentIds', 'updatedAt', 'views'
+          ])
+        )
+        && validText(request.resource.data.title, 3, 160)
+        && validText(request.resource.data.body, 1, 12000)
+        && request.resource.data.tags is list
+        && request.resource.data.tags.size() <= 8
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['resolvedById'])
+          || request.resource.data.resolvedById == uid()
+        );
+
+      allow delete: if canAccessChannel(resource.data.workspaceId, resource.data.channelId)
+        && (resource.data.authorId == uid() || canManage(resource.data.workspaceId));
+    }
+
+    match /replies/{replyId} {
+      allow read: if canAccessChannel(resource.data.workspaceId, resource.data.channelId);
+
+      allow create: if canWrite(request.resource.data.workspaceId)
+        && canAccessChannel(request.resource.data.workspaceId, request.resource.data.channelId)
+        && request.resource.data.keys().hasOnly([
+          'workspaceId', 'channelId', 'threadId', 'authorId', 'authorName', 'authorEmail', 'initials', 'body', 'createdAt'
+        ])
+        && validText(request.resource.data.body, 1, 6000)
+        && request.resource.data.authorId == uid()
+        && request.resource.data.authorEmail == email()
+        && get(/databases/$(database)/documents/discussions/$(request.resource.data.threadId)).data.workspaceId == request.resource.data.workspaceId
+        && get(/databases/$(database)/documents/discussions/$(request.resource.data.threadId)).data.channelId == request.resource.data.channelId;
+
+      allow update: if canAccessChannel(resource.data.workspaceId, resource.data.channelId)
+        && (resource.data.authorId == uid() || canManage(resource.data.workspaceId))
+        && immutableKeysUnchanged(['workspaceId', 'channelId', 'threadId', 'authorId', 'authorName', 'authorEmail', 'initials', 'createdAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['body', 'updatedAt', 'lastEditedById'])
+        && validText(request.resource.data.body, 1, 6000)
+        && request.resource.data.lastEditedById == uid();
+
+      allow delete: if canAccessChannel(resource.data.workspaceId, resource.data.channelId)
+        && (resource.data.authorId == uid() || canManage(resource.data.workspaceId));
+    }
+
+    match /reactions/{reactionId} {
+      allow read: if canAccessChannel(resource.data.workspaceId, resource.data.channelId);
+      allow create: if canWrite(request.resource.data.workspaceId)
+        && canAccessChannel(request.resource.data.workspaceId, request.resource.data.channelId)
+        && request.resource.data.userId == uid()
+        && request.resource.data.userEmail == email()
+        && request.resource.data.targetType in ['discussion', 'reply'];
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.userId == uid();
+    }
+
+    match /bookmarks/{bookmarkId} {
+      allow read: if signedIn()
+        && resource.data.userId == uid()
+        && canAccessChannel(resource.data.workspaceId, resource.data.channelId);
+      allow create: if signedIn()
+        && request.resource.data.userId == uid()
+        && request.resource.data.userEmail == email()
+        && canAccessChannel(request.resource.data.workspaceId, request.resource.data.channelId);
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.userId == uid();
+    }
+
+    match /documents/{documentId} {
+      allow read: if canAccessChannel(resource.data.workspaceId, resource.data.channelId);
+
+      allow create: if canWrite(request.resource.data.workspaceId)
+        && canAccessChannel(request.resource.data.workspaceId, request.resource.data.channelId)
+        && validText(request.resource.data.title, 3, 160)
+        && validText(request.resource.data.content, 1, 60000)
+        && request.resource.data.tags is list
+        && request.resource.data.tags.size() <= 8
+        && request.resource.data.authorId == uid()
+        && request.resource.data.authorEmail == email()
+        && request.resource.data.lastEditorId == uid()
+        && request.resource.data.lastEditorEmail == email()
+        && request.resource.data.versionCount == 0;
+
+      allow update: if canWrite(resource.data.workspaceId)
+        && canAccessChannel(resource.data.workspaceId, resource.data.channelId)
+        && immutableKeysUnchanged(['workspaceId', 'authorId', 'authorName', 'authorEmail', 'createdAt'])
+        && validText(request.resource.data.title, 3, 160)
+        && validText(request.resource.data.content, 1, 60000)
+        && request.resource.data.tags is list
+        && request.resource.data.tags.size() <= 8
+        && request.resource.data.lastEditorId == uid()
+        && request.resource.data.lastEditorEmail == email()
+        && request.resource.data.versionCount >= resource.data.versionCount;
+
+      allow delete: if canAccessChannel(resource.data.workspaceId, resource.data.channelId)
+        && (resource.data.authorId == uid() || canManage(resource.data.workspaceId));
+    }
+
+    match /documentVersions/{versionId} {
+      allow read: if canAccessChannel(resource.data.workspaceId, resource.data.channelId);
+      allow create: if canWrite(request.resource.data.workspaceId)
+        && canAccessChannel(request.resource.data.workspaceId, request.resource.data.channelId)
+        && validText(request.resource.data.title, 1, 160)
+        && validText(request.resource.data.content, 1, 60000)
+        && get(/databases/$(database)/documents/documents/$(request.resource.data.documentId)).data.workspaceId == request.resource.data.workspaceId
+        && get(/databases/$(database)/documents/documents/$(request.resource.data.documentId)).data.title == request.resource.data.title
+        && get(/databases/$(database)/documents/documents/$(request.resource.data.documentId)).data.content == request.resource.data.content
+        && get(/databases/$(database)/documents/documents/$(request.resource.data.documentId)).data.lastEditorId == request.resource.data.editorId
+        && get(/databases/$(database)/documents/documents/$(request.resource.data.documentId)).data.lastEditorEmail == request.resource.data.editorEmail;
+      allow update, delete: if false;
+    }
+
+    match /activity/{activityId} {
+      allow read: if isMember(resource.data.workspaceId);
+      allow create: if (canWrite(request.resource.data.workspaceId) || bootstrappingOwner(request.resource.data.workspaceId))
+        && request.resource.data.actorId == uid()
+        && validText(request.resource.data.actorName, 1, 80)
+        && validText(request.resource.data.summary, 1, 500);
+      allow update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.recipientId == uid();
+      allow create: if canWrite(request.resource.data.workspaceId)
+        && request.resource.data.actorId == uid()
+        && exists(membershipPath(request.resource.data.workspaceId, request.resource.data.recipientId))
+        && get(membershipPath(request.resource.data.workspaceId, request.resource.data.recipientId)).data.email == request.resource.data.recipientEmail
+        && validText(request.resource.data.text, 1, 500)
+        && request.resource.data.read == false;
+      allow update: if signedIn()
+        && resource.data.recipientId == uid()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+        && request.resource.data.read is bool;
+      allow delete: if signedIn() && resource.data.recipientId == uid();
     }
   }
 }
