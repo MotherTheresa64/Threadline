@@ -1,16 +1,17 @@
 type ThemeId='paper'|'moss'|'lavender'|'night';
 type ThemeOption={id:ThemeId;label:string;description:string;colors:[string,string];browserColor:string};
 const STORAGE_KEY='threadline-theme-v2';
-const DEFAULT_THEME:ThemeId='night';
+export const DEFAULT_THEME:ThemeId='night';
 const themes:ThemeOption[]=[
   {id:'paper',label:'Carbon',description:'Soft black with restrained silver',colors:['#08090d','#9aa4b2'],browserColor:'#08090d'},
   {id:'moss',label:'Signal',description:'Deep charcoal with muted green',colors:['#070d0b','#62b890'],browserColor:'#070d0b'},
   {id:'lavender',label:'Ultraviolet',description:'Black plum with electric lavender',colors:['#090713','#a85cff'],browserColor:'#090713'},
   {id:'night',label:'Threadline',description:'Near-black with signature violet',colors:['#05060c','#9d4dff'],browserColor:'#05060c'}
 ];
-function isTheme(value:string|null):value is ThemeId{return themes.some(theme=>theme.id===value)}
-function readTheme():ThemeId{try{const saved=localStorage.getItem(STORAGE_KEY);return isTheme(saved)?saved:DEFAULT_THEME}catch{return DEFAULT_THEME}}
+export function isTheme(value:string|null):value is ThemeId{return themes.some(theme=>theme.id===value)}
+export function readTheme(storage:Pick<Storage,'getItem'>|undefined=typeof localStorage==='undefined'?undefined:localStorage):ThemeId{try{const saved=storage?storage.getItem(STORAGE_KEY):null;return isTheme(saved)?saved:DEFAULT_THEME}catch{return DEFAULT_THEME}}
 function persistTheme(theme:ThemeId){try{localStorage.setItem(STORAGE_KEY,theme)}catch{/* Theme remains usable in memory. */}}
+export const themeIds:ThemeId[]=themes.map(theme=>theme.id);
 function setBrowserColor(color:string){let meta=document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');if(!meta){meta=document.createElement('meta');meta.name='theme-color';document.head.append(meta)}meta.content=color}
 function applyTheme(theme:ThemeId){
   const option=themes.find(item=>item.id===theme)??themes[0];
